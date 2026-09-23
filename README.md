@@ -209,6 +209,21 @@ less restricted than what we currently settle for.
 That idea became **MixRack**, a DJ app I have been building for a long time. If
 this project resonates with you, take a look: [mixrack.net](https://mixrack.net)
 
+<br>
+
+<div align="center">
+
+### Support the project
+
+If you enjoy the benefits that AZ-MODS gives you and would like to say thanks, you can support me on Ko-Fi below:<br>
+(Donations help fund development, and never unlock anything)
+
+<a href="https://ko-fi.com/kyyyle_z33"><img src="https://img.shields.io/badge/Support%20me%20on%20Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support me on Ko-fi"></a>
+
+</div>
+
+<br>
+
 ---
 
 <p align="center">
