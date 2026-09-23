@@ -53,6 +53,35 @@ you shouldn't ever have to flash again.
 
 <br>
 
+## Uninstall
+
+**Just want the deck stock for a gig?** Boot without the stick, or flip
+*Disable mods* for your stick in the desktop app and power-cycle. Nothing else
+is needed.
+
+**Removing AZ-MODS completely:**
+
+1. **Clean the deck first, while it's still on the modded firmware.** In the
+   desktop app, open *Install / Uninstall*, select your USB stick, and under
+   **Uninstall** tick **Uninstall AZ-MODS from the deck on the next
+   power-cycle**.
+
+2. **Power-cycle the deck with that stick in USB 1.** On this boot the deck
+   removes every AZ-MODS file it stored.
+
+3. **Check the result.** Put the stick back in your computer. The app shows
+   **No AZ-MODS files remain on the deck. You can now flash the stock
+   firmware.** If it lists anything still on the deck, leave the box ticked
+   and power-cycle once more.
+
+4. **Flash the stock firmware.** Put the stock `XDJAZv130.UPD` on a USB stick
+   and flash it the same way you installed: power off, stick in **USB 1**,
+   hold **deck 2's BEAT SYNC + MASTER** while powering on, and run the update.
+
+Your deck is now exactly as it started before modding.
+
+<br>
+
 ## Features
 
 | Mod | What it does |
@@ -89,12 +118,18 @@ A sample roll instrument on the X-PAD. In SLIP LOOP mode, **pad 8** arms it
 X-PAD zones set the rate, **1 to 1/32** of a beat, locked to the deck's BPM.
 Four banks of your own samples.
 
+The **MIC 2** EQ knobs shape the roll on both decks. **HI** is the volume:
+12 o'clock is the normal level, turn left to fade it out or right for up to
++6 dB. **MID** is the pitch: 12 o'clock is the sample's own pitch, and the ends
+are an octave down or up.
+
 <p align="center"><img src="images/drumroll.png" width="520" alt="Drum roll armed"></p>
 
 ### 60 FPS Waveforms
 
-Stock repaints at about 30 FPS. This lifts the cap to 60. It won't hold 60
-under every load, but it's no longer limited. An optional overlay shows the
+Stock repaints at about 30 FPS. This runs the waveforms at the screen's full
+60 FPS, in the 2-deck and 4-deck views alike. Its **60 FPS UI** option also
+makes scrolling the track lists smoother. An optional overlay shows the
 measured rate.
 
 <p align="center"><img src="images/60fps.png" width="258" alt="60 FPS waveforms"></p>
@@ -129,9 +164,7 @@ included for the v1.0 release. This is only the beginning!
   boot cleanly, flip *Disable mods* for your stick in the desktop app and
   power-cycle, or just boot without the stick. The deck boots stock either way.
 - **Stock recovery always works.** Update mode is untouched. Flash the stock
-  `XDJAZv130.UPD` the same way and the deck is stock again. To also put the
-  original boot logo back, add an empty `logo.restore` file to `MODS` and
-  boot once before you flash.
+  `XDJAZv130.UPD` the same way and the deck is stock again.
 
 <br>
 
@@ -155,7 +188,8 @@ within the desktop app is planned.
 <details>
 <summary><b>Will an official update remove it?</b></summary>
 <br>
-Yes. Flashing stock returns the deck to stock.
+Yes, flashing stock firmware removes the mods. To also clear the files AZ-MODS
+stored on the deck, run the [Uninstall](#uninstall) steps before you flash.
 </details>
 
 <details>
@@ -203,11 +237,26 @@ Have fun!
 ## More from the author
 
 AZ-MODS is free and will stay free. It is also proof of a bigger idea I have
-been chasing for years: that DJ software can be more capable, more fun, and
-less restricted than what we currently settle for.
+been chasing for years: that <ins>DJ software can be more capable, more fun, and
+less restricted than what we currently settle for.</ins>
 
 That idea became **MixRack**, a DJ app I have been building for a long time. If
 this project resonates with you, take a look: [mixrack.net](https://mixrack.net)
+
+<br>
+
+<div align="center">
+
+### Support the project
+
+If you enjoy the benefits that AZ-MODS gives you and would like to say thanks, you can support me on Ko-Fi below:<br>
+(Donations help fund development, and never unlock anything)
+
+<a href="https://ko-fi.com/kyyyle_z33"><img src="https://img.shields.io/badge/Support%20me%20on%20Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support me on Ko-fi"></a>
+
+</div>
+
+<br>
 
 ---
 
