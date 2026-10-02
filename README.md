@@ -100,12 +100,9 @@ Your deck is now exactly as it started before modding.
 
 ### Mod Menu
 
-The home for every mod, right in the deck's SOURCE list. Select **MOD MENU**
-and press the browse knob (or tap it again) to open it full screen: the mods
-on the left, and the selected mod's switch, settings and a short description
-on the right. Turn the knob to move, press it to go into the settings, and
-press **BACK** or **SOURCE** to come out. Your settings are remembered between
-sessions, and future mods show up here too.
+The home for every mod, right in the deck's SOURCE list: switch features on
+and off and change their settings, with a short description of each. Your
+settings are remembered, and future mods show up here too.
 
 <p align="center"><img src="images/modmenu.png" width="640" alt="The Mod Menu, with the Stems settings open"></p>
 
@@ -130,6 +127,8 @@ the Tag List and choose **MAKE STEMS**: the deck sends the tracks to the
 AZ-MODS app on your computer over WiFi, the app makes the stems, and they land
 back on your USB. The stem mark animates while a track waits and while its
 stems are made.
+
+<p align="center"><img src="images/remote-stems.png" width="220" alt="The MAKE STEMS button in the deck's MENU"></p>
 
 Turn on **Remote Stems** once in the desktop app, plug your USB into that
 computer once so the deck knows where to send its tracks, and keep the app
