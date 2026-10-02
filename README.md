@@ -5,7 +5,7 @@
 
 **Root Access & Mods for the XDJ-AZ**
 
-[![Version](https://img.shields.io/badge/version-1.0-8A2BE2)](../../releases)
+[![Version](https://img.shields.io/badge/version-1.1-8A2BE2)](../../releases)
 [![Firmware](https://img.shields.io/badge/XDJ--AZ%20firmware-1.30-blue)](#install)
 [![Platform](https://img.shields.io/badge/desktop%20app-macOS%20%7C%20Windows-lightgrey)](../../releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
