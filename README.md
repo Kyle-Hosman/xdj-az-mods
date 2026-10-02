@@ -151,7 +151,7 @@ Press **MENU** on a track, playlist or folder for the rest:
 - **SELECT** a playlist, then **ADD TO** from any list, including Search
 - **UNDO** your recent edits, one at a time
 
-<p align="center"><img src="images/playlist-menu.png" width="640" alt="MENU on a track: COPY, PASTE, REMOVE, MAKE STEMS and UNDO"></p>
+<p align="center"><img src="images/playlist-menu.png" width="640" alt="MENU on a playlist: COPY, PASTE, SELECT, NEW, EDIT, MAKE STEMS and UNDO"></p>
 
 Edits are written the way rekordbox expects, so your USB stays in step with
 rekordbox. Turn it on under **Playlist Editing** in the Mod Menu.
