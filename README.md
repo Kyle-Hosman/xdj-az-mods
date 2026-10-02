@@ -141,6 +141,8 @@ Edit your USB playlists right on the deck. Hold the browse knob down for a
 second to **grab** a track, turn the knob to move it, and press again to
 **drop** it. It works for playlists and folders too.
 
+<p align="center"><img src="images/playlist-move.png" width="640" alt="A track grabbed with the browse knob, moving down the playlist"></p>
+
 Press **MENU** on a track, playlist or folder for the rest:
 
 - **COPY** and **PASTE**, also from one USB to another (tracks are copied with
@@ -149,6 +151,8 @@ Press **MENU** on a track, playlist or folder for the rest:
 - **RENAME** and **REMOVE**
 - **SELECT** a playlist, then **ADD TO** from any list, including Search
 - **UNDO** your recent edits, one at a time
+
+<p align="center"><img src="images/playlist-menu.png" width="640" alt="MENU on a track: COPY, PASTE, REMOVE, MAKE STEMS and UNDO"></p>
 
 Edits are written the way rekordbox expects, so your USB stays in step with
 rekordbox. Turn it on under **Playlist Editing** in the Mod Menu.
