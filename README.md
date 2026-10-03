@@ -5,7 +5,7 @@
 
 **Root Access & Mods for the XDJ-AZ**
 
-[![Version](https://img.shields.io/badge/version-1.0-8A2BE2)](../../releases)
+[![Version](https://img.shields.io/badge/version-1.1-8A2BE2)](../../releases)
 [![Firmware](https://img.shields.io/badge/XDJ--AZ%20firmware-1.30-blue)](#install)
 [![Platform](https://img.shields.io/badge/desktop%20app-macOS%20%7C%20Windows-lightgrey)](../../releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -90,20 +90,21 @@ Your deck is now exactly as it started before modding.
 
 | Mod | What it does |
 |:--|:--|
-| [**Mod Menu**](#mod-menu) | Toggle every mod, pick colors and banks, right from the deck's SOURCE list |
+| [**Mod Menu**](#mod-menu) | Every mod and its settings in one full-screen menu, right from the deck's SOURCE list |
 | [**Stems**](#stems) | VOCAL · MELODY · BASS · DRUMS on the pads, through the deck's native audio path |
+| [**Remote Stems**](#remote-stems) | Make stems for a track or a whole playlist from the deck, sent to your computer over WiFi |
+| [**Playlist Editing**](#playlist-editing) | Move, copy, paste, rename and remove tracks, playlists and folders on the deck |
 | [**Drum Roll**](#drum-roll) | A sample roll instrument on the X-PAD, locked to the deck's BPM |
 | [**60 FPS Waveforms**](#60-fps-waveforms) | Lifts the stock ~30 FPS waveform cap to 60 |
 | [**Pad Colors**](#pad-colors) | Your own color for each pad-mode button |
 
 ### Mod Menu
 
-The home for every mod, right in the deck's SOURCE list. Scroll to **MOD
-MENU** with the browse knob to switch features on and off, pick pad colors
-and choose a drum-roll bank, all without leaving the deck. Your settings are
-remembered between sessions, and future mods show up here too.
+The home for every mod, right in the deck's SOURCE list: switch features on
+and off and change their settings, with a short description of each. Your
+settings are remembered, and future mods show up here too.
 
-<p align="center"><img src="images/modmenu.png" width="420" alt="Mod menu in the source list"></p>
+<p align="center"><img src="images/modmenu.png" width="640" alt="The Mod Menu, with the Stems settings open"></p>
 
 ### Stems
 
@@ -114,6 +115,46 @@ rendered by the desktop app and stored in a `STEMS` folder on your USB with
 your music. Tracks without stems play as normal.
 
 <p align="center"><img src="images/stems.png" width="520" alt="Stems pad page"></p>
+
+Tracks and playlists that have stems show a small stem mark in the track
+lists, so you can see at a glance what is ready. It can be turned off under
+**Stems** in the Mod Menu.
+
+### Remote Stems
+
+Make stems without leaving the deck. Press **MENU** on a track, a playlist or
+the Tag List and choose **MAKE STEMS**: the deck sends the tracks to the
+AZ-MODS app on your computer over WiFi, the app makes the stems, and they land
+back on your USB. The stem mark animates while a track waits and while its
+stems are made.
+
+<p align="center"><img src="images/remote-stems.png" width="220" alt="The MAKE STEMS button in the deck's MENU"></p>
+
+Turn on **Remote Stems** once in the desktop app, plug your USB into that
+computer once so the deck knows where to send its tracks, and keep the app
+open while it works. The deck and the computer need to be on the same network.
+
+### Playlist Editing
+
+Edit your USB playlists right on the deck. Hold the browse knob down for a
+second to **grab** a track, turn the knob to move it, and press again to
+**drop** it. It works for playlists and folders too.
+
+<p align="center"><img src="images/playlist-move.png" width="640" alt="A track grabbed with the browse knob, moving down the playlist"></p>
+
+Press **MENU** on a track, playlist or folder for the rest:
+
+- **COPY** and **PASTE**, also from one USB to another (tracks are copied with
+  their analysis, cues and artwork)
+- **NEW PLAYLIST** and **NEW FOLDER**, named with the on-screen keyboard
+- **RENAME** and **REMOVE**
+- **SELECT** a playlist, then **ADD TO** from any list, including Search
+- **UNDO** your recent edits, one at a time
+
+<p align="center"><img src="images/playlist-menu.png" width="640" alt="MENU on a playlist: COPY, PASTE, SELECT, NEW, EDIT, MAKE STEMS and UNDO"></p>
+
+Edits are written the way rekordbox expects, so your USB stays in step with
+rekordbox. Turn it on under **Playlist Editing** in the Mod Menu.
 
 ### Drum Roll
 
@@ -147,8 +188,12 @@ BEAT JUMP).
 
 ### Other Mods
 
-I have tons of other ideas for more mods, the ones listed above are just what's
-included for the v1.0 release. This is only the beginning!
+The **Extras** section of the Mod Menu holds smaller tweaks, each with its own
+switch: **BEAT JUMP 2 First** swaps the two BEAT JUMP pages so the first press
+gives the 8, 16, 32 and 64 beat jumps, and **Fine Vinyl Speed Adjust** turns
+the SHORTCUT screen's vinyl speed steps into a slider with 1% steps.
+
+I have tons of other ideas for more mods. This is only the beginning!
 
 <br>
 
@@ -184,9 +229,9 @@ No, XDJ-AZ only. The patcher refuses anything else.
 <summary><b>How good are the stems?</b></summary>
 <br>
 They're rendered ahead of time on your computer, not in realtime on the deck.
-v1.0 uses a balanced separation model: good, clean stems without too long of a
-process time per track. Swapping to other models and quality settings from
-within the desktop app is planned.
+The desktop app's **Stem Quality** setting picks the trade-off: **Medium** (the
+default) is fast and clean, **High** and **Very High** take longer for better
+separation. Tracks made at a lower quality can be upgraded from the app.
 </details>
 
 <details>
@@ -212,7 +257,8 @@ The one in USB 1 takes priority.
 <summary><b>Does it affect my music library?</b></summary>
 <br>
 The app adds three folders to your drive, for the mods, stems and drum samples.
-Your music library is not affected.
+Your music library is only changed when you edit playlists on the deck with
+Playlist Editing, and those edits are written the way rekordbox expects.
 </details>
 
 <br>
