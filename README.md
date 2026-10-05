@@ -30,6 +30,8 @@
 > [!NOTE]
 > Before you start, download the stock **XDJAZv130.UPD** from AlphaTheta's
 > support site.
+> ALSO, make sure the USB you're using to flash the modded firmware is
+> formatted to <b>FAT32</b>.
 
 1. **Get the AZ-MODS desktop app** (Mac or Windows) from the [releases page](../../releases).
 
