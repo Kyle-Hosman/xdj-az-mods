@@ -5,8 +5,8 @@
 
 **Root Access & Mods for the XDJ-AZ**
 
-[![Version](https://img.shields.io/badge/version-1.1-8A2BE2)](../../releases)
-[![Firmware](https://img.shields.io/badge/XDJ--AZ%20firmware-1.30-blue)](#install)
+[![Version](https://img.shields.io/badge/version-1.2-8A2BE2)](../../releases)
+[![Firmware](https://img.shields.io/badge/XDJ--AZ%20firmware-2.00-blue)](#install)
 [![Platform](https://img.shields.io/badge/desktop%20app-macOS%20%7C%20Windows-lightgrey)](../../releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -28,16 +28,16 @@
 ## Install
 
 > [!NOTE]
-> Before you start, download the stock **XDJAZv130.UPD** from AlphaTheta's
-> support site.
+> Before you start, download the stock **XDJAZv200.UPD** (firmware 2.00) from
+> AlphaTheta's support site.
 > ALSO, make sure the USB you're using to flash the modded firmware is
 > formatted to <b>FAT32</b>.
 
 1. **Get the AZ-MODS desktop app** (Mac or Windows) from the [releases page](../../releases).
 
 2. **Patch the firmware (once).** In the desktop app, open the *Install* tab,
-   drop in your stock `XDJAZv130.UPD`, select your USB stick and click
-   **Build & write to USB**. On the deck: power off, put the stick in
+   drop in your stock `.UPD`, select your USB stick and click
+   **Build & write to USB**. This builds AZ-MODS firmware **2.01**. On the deck: power off, put the stick in
    **USB 1**, hold **deck 2's BEAT SYNC + MASTER** while powering on, and run
    the update.
 
@@ -80,7 +80,7 @@ is needed.
    firmware.** If it lists anything still on the deck, leave the box ticked
    and power-cycle once more.
 
-4. **Flash the stock firmware.** Put the stock `XDJAZv130.UPD` on a USB stick
+4. **Flash the stock firmware.** Put the stock `XDJAZv200.UPD` on a USB stick
    and flash it the same way you installed: power off, stick in **USB 1**,
    hold **deck 2's BEAT SYNC + MASTER** while powering on, and run the update.
 
@@ -98,7 +98,7 @@ Your deck is now exactly as it started before modding.
 | [**Playlist Editing**](#playlist-editing) | Move, copy, paste, rename and remove tracks, playlists and folders on the deck |
 | [**Drum Roll**](#drum-roll) | A sample roll instrument on the X-PAD, locked to the deck's BPM |
 | [**60 FPS Waveforms**](#60-fps-waveforms) | Lifts the stock ~30 FPS waveform cap to 60 |
-| [**Pad Colors**](#pad-colors) | Your own color for each pad-mode button |
+| [**Themes**](#themes) | A light Day theme for bright rooms, plus four dark color themes |
 
 ### Mod Menu
 
@@ -181,19 +181,31 @@ measured rate.
 
 <p align="center"><img src="images/60fps.png" width="258" alt="60 FPS waveforms"></p>
 
-### Pad Colors
+### Themes
 
-Pick your own color for each pad-mode button (HOT CUE, BEAT LOOP, SLIP LOOP,
-BEAT JUMP).
+Change the look of the whole deck screen. **Day** is a light theme that stays
+easy to read in bright rooms and outdoor sets, and **AZ-MODS**, **Midnight**,
+**Ember** and **Forest** are dark themes, each with its own accent color.
+Waveform, stem and cue colors keep their meaning in every theme. Pick one under
+**Themes** in the Mod Menu: it switches instantly, with no reload.
 
-<p align="center"><img src="images/padcolors.png" width="420" alt="Pad color picker"></p>
+<p align="center"><img src="images/themes-day.png" width="640" alt="The waveform view in the Day theme"></p>
 
 ### Other Mods
 
-The **Extras** section of the Mod Menu holds smaller tweaks, each with its own
-switch: **BEAT JUMP 2 First** swaps the two BEAT JUMP pages so the first press
-gives the 8, 16, 32 and 64 beat jumps, and **Fine Vinyl Speed Adjust** turns
-the SHORTCUT screen's vinyl speed steps into a slider with 1% steps.
+Smaller tweaks, each with its own switch in the Mod Menu (most of them under
+**Extras**):
+
+| Mod | What it does |
+|:--|:--|
+| **Phase Meter** | Shows how the two decks line up, beat by beat, above their waveforms |
+| **Hide Track Title** | Tap a deck's track title to hide it or show it again |
+| **BEAT JUMP 2 First** | BEAT JUMP opens the 8, 16, 32 and 64 beat jumps first |
+| **Fine Vinyl Speed Adjust** | The SHORTCUT vinyl speed steps become a 1% slider |
+| **Bluetooth Auto-Connect** | Connects to the paired device when Bluetooth starts |
+| **Remember Selected Channel** | Your Bluetooth channel is set again when a device connects |
+| **Pad Colors** | Your own color for each pad-mode button (HOT CUE, BEAT LOOP, SLIP LOOP, BEAT JUMP) |
+| **Overlays** | Small readouts on the deck screen: FPS, CPU use and clock, RAM and temperature |
 
 I have tons of other ideas for more mods. This is only the beginning!
 
@@ -215,11 +227,22 @@ I have tons of other ideas for more mods. This is only the beginning!
   boot cleanly, flip *Disable mods* for your stick in the desktop app and
   power-cycle, or just boot without the stick. The deck boots stock either way.
 - **Stock recovery always works.** Update mode is untouched. Flash the stock
-  `XDJAZv130.UPD` the same way and the deck is stock again.
+  `XDJAZv200.UPD` the same way and the deck is stock again.
+- **Crash protection.** If the mods ever keep crashing the deck right after it
+  starts, the deck switches them off and starts normally until the mods on the
+  USB change.
 
 <br>
 
 ## FAQ
+
+<details>
+<summary><b>I'm on AZ-MODS 1.32. How do I get 2.01?</b></summary>
+<br>
+Build 2.01 from the stock <code>XDJAZv200.UPD</code> in the desktop app and flash
+it the same way as before. The app also updates the mods on your USB if they are
+too old for 2.01.
+</details>
 
 <details>
 <summary><b>Other AlphaTheta decks?</b></summary>
