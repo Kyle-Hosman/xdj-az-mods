@@ -9,8 +9,9 @@
 [![Firmware](https://img.shields.io/badge/XDJ--AZ%20firmware-2.00-blue)](#install)
 [![Platform](https://img.shields.io/badge/desktop%20app-macOS%20%7C%20Windows-lightgrey)](../../releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/SGBxQPK24J)
 
-[**Download**](../../releases) · [Install](#install) · [Features](#features) · [How it works](#how-it-works) · [Safety](#safety) · [FAQ](#faq) · [Developers](#developers)
+[**Download**](../../releases) · [Install](#install) · [Features](#features) · [How it works](#how-it-works) · [Safety](#safety) · [FAQ](#faq) · [Developers](#developers) · [**Discord**](https://discord.gg/SGBxQPK24J)
 
 </div>
 
