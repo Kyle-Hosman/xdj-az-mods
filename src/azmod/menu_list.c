@@ -252,8 +252,7 @@ static void draw_bank_button(azmod_state *s, const azmod_fb *fb, int i, int scal
         const char *t = az_choice_label(i, b);
         uint32_t tc = lit ? on_fg : (row_hi ? C_HI_TEXT : (active ? C_TEXT : C_STEM_OFF_FG));
         if (!azmod_ttf_menu ||
-            !azmod_ttf_menu(fb, x, y, w, h, t, h * 3 / 5, 0, 2,
-                            tc)) /* centered; 60% of the tile, smaller than labels */
+            !azmod_ttf_menu(fb, x, y, w, h, t, c_btn_px(w, h, t), 0, 2, tc)) /* centered */
             draw_text(fb, x + (w - 5 * scale) / 2, y + (h - 7 * scale) / 2, t, scale, tc);
     }
 }

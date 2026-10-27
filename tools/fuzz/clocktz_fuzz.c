@@ -40,7 +40,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {
             FZ_ASSERT(found);
         }
         char t[16];
-        ctz_format(t, sizeof t, probes[k], off, sel & 1);
+        ctz_format(t, sizeof t, probes[k], off, sel & 1, sel & 2);
         FZ_ASSERT(strlen(t) >= 5 && strlen(t) < sizeof t);
     }
     return 0;

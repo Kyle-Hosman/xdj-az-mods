@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Generated per firmware build. Do not edit by hand. 398 EP147 addresses for azmod.
+/* Generated per firmware build. Do not edit by hand. 413 EP147 addresses for azmod.
  *
  * Code names an EP147 address by its v1.30 value (EP_1b93a28). ep147_addr_init(build)
  * fills ep147_addr[] for the running build, which common/ep147build.h
@@ -127,6 +127,8 @@ enum {
     EPI_1d6bc60,
     EPI_1d6bff0,
     EPI_1d6f280,
+    EPI_1d76f18,
+    EPI_1d77468,
     EPI_1d82b08,
     EPI_1d9fb68,
     EPI_1da09b0,
@@ -163,6 +165,7 @@ enum {
     EPI_1e02d18,
     EPI_1e06450,
     EPI_1e071a0,
+    EPI_1e27d28,
     EPI_1e461f8,
     EPI_1e46af0,
     EPI_1e678f0,
@@ -210,16 +213,19 @@ enum {
     EPI_230d790,
     EPI_230e3e0,
     EPI_230f530,
+    EPI_230f5c0,
     EPI_2333ce0,
     EPI_233c340,
     EPI_2398900,
     EPI_239cda0,
     EPI_23a2e60,
     EPI_23a45f0,
+    EPI_23a54e0,
     EPI_23aee40,
     EPI_23aeef0,
     EPI_23aef40,
     EPI_23af140,
+    EPI_23af590,
     EPI_23af680,
     EPI_23af6c0,
     EPI_23afeb0,
@@ -229,6 +235,7 @@ enum {
     EPI_23b1440,
     EPI_23b4be0,
     EPI_23de290,
+    EPI_23eb200,
     EPI_23ed7c0,
     EPI_23ee2a0,
     EPI_23f1370,
@@ -237,13 +244,16 @@ enum {
     EPI_2401dd0,
     EPI_2402ff0,
     EPI_242d0a0,
+    EPI_2437090,
     EPI_243d1d0,
     EPI_243d200,
     EPI_2459540,
     EPI_2459640,
     EPI_24597e0,
     EPI_2465c70,
+    EPI_2471200,
     EPI_2482f30,
+    EPI_2485140,
     EPI_2485d40,
     EPI_2488570,
     EPI_248a250,
@@ -252,6 +262,7 @@ enum {
     EPI_248bfc0,
     EPI_2491ed0,
     EPI_24924f0,
+    EPI_249a4b0,
     EPI_249d6b0,
     EPI_249daf0,
     EPI_249efe0,
@@ -330,6 +341,8 @@ enum {
     EPI_2b7f408,
     EPI_2b7f588,
     EPI_2b7f6d8,
+    EPI_2b88870,
+    EPI_2b88a48,
     EPI_2b9eb88,
     EPI_2bcc810,
     EPI_2bcdec0,
@@ -343,6 +356,7 @@ enum {
     EPI_2cd4b28,
     EPI_2ce30d0,
     EPI_2ce7c50,
+    EPI_2cedcf8,
     EPI_2cee580,
     EPI_2cfe0f0,
     EPI_2cfe5c0,
@@ -403,6 +417,7 @@ enum {
     EPI_315e560,
     EPI_3480128,
     EPI_3b25a60,
+    EPI_3b32488,
     EPI_3b35728,
     EPI_3b35f40,
     EPI_3b35fb8,
@@ -528,6 +543,8 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x1d6bc60,
     0x1d6bff0,
     0x1d6f280,
+    0x1d76f18,
+    0x1d77468,
     0x1d82b08,
     0x1d9fb68,
     0x1da09b0,
@@ -564,6 +581,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x1e02d18,
     0x1e06450,
     0x1e071a0,
+    0x1e27d28,
     0x1e461f8,
     0x1e46af0,
     0x1e678f0,
@@ -611,16 +629,19 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x230d790,
     0x230e3e0,
     0x230f530,
+    0x230f5c0,
     0x2333ce0,
     0x233c340,
     0x2398900,
     0x239cda0,
     0x23a2e60,
     0x23a45f0,
+    0x23a54e0,
     0x23aee40,
     0x23aeef0,
     0x23aef40,
     0x23af140,
+    0x23af590,
     0x23af680,
     0x23af6c0,
     0x23afeb0,
@@ -630,6 +651,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x23b1440,
     0x23b4be0,
     0x23de290,
+    0x23eb200,
     0x23ed7c0,
     0x23ee2a0,
     0x23f1370,
@@ -638,13 +660,16 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2401dd0,
     0x2402ff0,
     0x242d0a0,
+    0x2437090,
     0x243d1d0,
     0x243d200,
     0x2459540,
     0x2459640,
     0x24597e0,
     0x2465c70,
+    0x2471200,
     0x2482f30,
+    0x2485140,
     0x2485d40,
     0x2488570,
     0x248a250,
@@ -653,6 +678,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x248bfc0,
     0x2491ed0,
     0x24924f0,
+    0x249a4b0,
     0x249d6b0,
     0x249daf0,
     0x249efe0,
@@ -731,6 +757,8 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2b7f408,
     0x2b7f588,
     0x2b7f6d8,
+    0x2b88870,
+    0x2b88a48,
     0x2b9eb88,
     0x2bcc810,
     0x2bcdec0,
@@ -744,6 +772,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2cd4b28,
     0x2ce30d0,
     0x2ce7c50,
+    0x2cedcf8,
     0x2cee580,
     0x2cfe0f0,
     0x2cfe5c0,
@@ -804,6 +833,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x315e560,
     0x3480128,
     0x3b25a60,
+    0x3b32488,
     0x3b35728,
     0x3b35f40,
     0x3b35fb8,
@@ -928,6 +958,8 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x1ed5f28,   /* hand: instruction fingerprint mov x0,#0x1dc; movk x0,#0x207,lsl#32 unique in both builds ( */
     0x1ed6308,   /* hand: SimpleWaveform2DeckWidget Label setText(this+Label, text, 0): 1.30 slot 13 = ldr x0, */
     0x1ed9d50,   /* hand: SimpleWaveform4DeckWidget: same as HT_SW_ORIG2 (2.00 slot 14; slot 13 0x1ed9d10 is t */
+    0x1ee21c8,   /* hand: gui::waveform::KeyWidget: writes the tray KEY Label (+0x140) with juce::Label::setTe */
+    0x1ee2718,   /* hand: KeyWidget: isEnabled() of its KEY row arrow (+0x148; ldr x0,[x0,#0x148]; b Component */
     0x1eedca0,   /* code w=12 | xref 4/4 agree */
     0x1f0ad70,   /* hand: TrackInfo2DeckWidget title setText: 1.30 slot 14 = ldr x0,[x0,#360]; mov w2,#0; b 0x */
     0x1f0c3a0,   /* hand: TrackInfo4DeckWidget: same as HT_ORIG2 (2.00 slot 15; slot 14 0x1f0c380 is the new s */
@@ -964,6 +996,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x1f6ef50,   /* code w=12 | ptr 1 agree */
     0x1f72658,   /* hand: the sub column button's ctor (btn, &name, &image, &image, &image, 1, 1, 0.3f, 0.5f): */
     0x1f733a8,   /* code w=12 | ptr 4 agree */
+    0x1f93f08,   /* hand: vtable slot 2 (timerCallback) of N3gui11player_info11LocalPlayerE: v2.00 vtable 0x31 */
     0x1fb25f8,   /* code w=12 | xref 6/6 agree */
     0x1fb2ef0,   /* code w=12 | xref 6/6 agree */
     0x1fd3fa8,   /* code w=12 | xref 2/2 agree */
@@ -1011,16 +1044,19 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x247ac30,   /* code w=12 | xref 6/6 agree */
     0x247b880,   /* code w=48 | xref 5/6 agree */
     0x247c9d0,   /* code w=24 | xref 6/6 agree */
+    0x247ca60,   /* code w=12 | xref 6/6 agree */
     0x24a1180,   /* code w=96 | xref 6/6 agree */
     0x24a97e0,   /* hand: juce::String(CharPointer_UTF8) (this, &utf8): the call the sub item formatter makes  */
     0x2505da0,   /* code w=12 | xref 6/6 agree */
     0x250a240,   /* code w=12 | xref 6/6 agree */
     0x2510300,   /* code w=48 | xref 6/6 agree */
     0x2511a90,   /* code w=24 | xref 5/6 agree */
+    0x2512980,   /* hand: juce::Colour::withMultipliedAlpha(float), result through x8: drawLabel, right after  */
     0x251c2e0,   /* code w=24 | xref 6/6 agree */
     0x251c390,   /* code w=12 | xref 6/6 agree */
     0x251c3e0,   /* code w=12 | xref 6/6 agree */
     0x251c5e0,   /* code w=12 | xref 2/6 agree */
+    0x251ca30,   /* hand: juce::Graphics::setFont(const Font &): drawLabel, x1 = the Label + 0x178 (its font)  */
     0x251cb20,   /* code w=12 | xref 3/6 agree */
     0x251cb60,   /* code w=12 | xref 6/6 agree */
     0x251d350,   /* code w=12 | xref 6/6 agree */
@@ -1030,6 +1066,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x251e8e0,   /* code w=48 | xref 6/6 agree */
     0x2522080,   /* code w=12 | xref 5/5 agree */
     0x254b730,   /* code w=12 | xref 4/6 agree */
+    0x25586a0,   /* hand: juce::Graphics::drawFittedText(String, Rectangle<int>, Justification, maxLines, minS */
     0x255ac60,   /* code w=12 | xref 6/6 agree */
     0x255b740,   /* code w=12 | xref 4/6 agree */
     0x255e810,   /* code w=12 | ptr 2 agree */
@@ -1038,13 +1075,16 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x256f270,   /* code w=12 | ptr 2 agree */
     0x2570490,   /* code w=12 | ptr 2 agree */
     0x259a540,   /* code w=24 | xref 6/6 agree | ptr 4 agree */
+    0x25a4530,   /* hand: juce::Component::isEnabled: drawLabel (1.30 0x2475408 / 2.00 0x25e270c) picks alpha  */
     0x25aa670,   /* code w=12 | xref 4/6 agree */
     0x25aa6a0,   /* code w=12 | xref 4/4 agree */
     0x25c69e0,   /* hand: juce::TableHeaderComponent::getIndexOfColumnId(id, onlyVisible): called by the heade */
     0x25c6ae0,   /* hand: juce::TableHeaderComponent::getColumnPosition(index) (Rectangle<int> sret): the head */
     0x25c6c80,   /* hand: juce::TableHeaderComponent::isColumnVisible(id): the call BC_LAYOUT makes for each c */
     0x25d3110,   /* code w=12 | xref 6/6 agree */
+    0x25de6a0,   /* hand: juce::Component::findColour(id), result through x8: the call after mov w1,#0x281 in  */
     0x25f03d0,   /* hand: juce::Component::getComponentAt(const Point<int> &): the only self-recursive functio */
+    0x25f25e0,   /* hand: juce::Component::addChildComponent body (parent, child, zOrder): addAndMakeVisible t */
     0x25f31e0,   /* code w=12 | xref 6/6 agree */
     0x25f5a10,   /* code w=24 | xref 6/6 agree */
     0x25f76f0,   /* code w=12 | xref 3/3 agree */
@@ -1053,6 +1093,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x25f9460,   /* hand: juce::TableHeaderComponent::columnClicked(this, columnId, mods): a sortable column,  */
     0x25ff370,   /* hand: RTTI: slot 0 (complete-object destructor) of the primary vtable whose type_info name */
     0x25ff990,   /* code w=12 | xref 1/6 agree */
+    0x2607950,   /* hand: juce::Component::removeChildComponent(Component *): addAndMakeVisible (1.30 0x249d6b */
     0x260ab50,   /* code w=12 | xref 6/6 agree */
     0x260af90,   /* code w=12 | xref 6/6 agree | ptr 4 agree */
     0x260c480,   /* code w=12 | xref 6/6 agree */
@@ -1131,6 +1172,8 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x2ef9338,   /* vtable N3gui6browse15TrackListWidgetE +0x0 | xref 2/2 agree | ptr 1 agree */
     0x2ef94c0,   /* vtable N3gui6browse15TrackListWidgetE +0x0 | xref 4/4 agree */
     0x2ef9618,   /* vtable N3gui6browse15TrackListWidgetE +0x0 | xref 4/4 agree */
+    0x2f027a0,   /* hand: RTTI: the primary vtable (offset-to-top 0) of N3gui11performance14KeyShiftWidgetE (t */
+    0x2f02978,   /* hand: RTTI: the same vtable group, the entry with offset-to-top -112: the KeyShiftWidget j */
     0x2f18ab8,   /* vtable N3gui31OverviewWaveform1200PointWidgetE +0x0 | xref 6/6 agree */
     0x2f77aa0,   /* hand: RTTI: the vtable of N3gui6browse28SubCategorySelectPopupWidgetE with offset-to-top - */
     0x2f79150,   /* vtable N3gui11ScrollLabelE +0x0 | xref 6/6 agree */
@@ -1144,9 +1187,10 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x3084a68,   /* hand: RTTI: the only vtable whose type_info names N3gui14LinkInfoWidgetE (typeinfo 0x3084a */
     0x3093008,   /* vtable N3gui8waveform25SimpleWaveform2DeckWidgetE +0x0 */
     0x3098688,   /* vtable N3gui8waveform25SimpleWaveform4DeckWidgetE +0x0 */
+    0x309f030,   /* hand: RTTI: the primary vtable (offset-to-top 0) of N3gui8waveform9KeyWidgetE; its ctor 1. */
     0x309f8c0,   /* vtable N3gui8waveform24DeckInfo2DeckFieldWidgetE +0x0 | xref 2/2 agree */
-    0x30af430,   /* vtable N3gui8waveform19DeckInfo2DeckWidgetE +0x0 | xref 2/2 agree */
-    0x30af900,   /* vtable N3gui8waveform19DeckInfo4DeckWidgetE +0x0 | xref 2/2 agree */
+    0x30af430,   /* hand: RTTI: the primary vtable of N3gui8waveform19DeckInfo2DeckWidgetE (ctor 1.30 0x1d7bd8 */
+    0x30af900,   /* hand: RTTI: the primary vtable of N3gui8waveform19DeckInfo4DeckWidgetE (ctor 1.30 0x1d82b0 */
     0x30bca40,   /* vtable N3gui8waveform19DeckInfoFieldWidgetE +0x0 | xref 1/2 agree */
     0x30cc9b8,   /* vtable N3gui8waveform17DeckNo2DeckWidgetE +0x0 | xref 4/6 agree */
     0x30cef28,   /* vtable N3gui8waveform17DeckNo4DeckWidgetE +0x0 | xref 4/6 agree */
@@ -1204,6 +1248,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x3511a40,   /* vtable N4juce18LinuxComponentPeer19LinuxRepaintManagerE +0x0 | xref 3/3 agree */
     0x384b430,   /* hand: section headers: .rodata sh_addr+sh_size (v1.30 value reproduces azmod's literal) */
     0x3f84a88,   /* hand: dynamic relocations: the .rela.plt R_AARCH64_JUMP_SLOT r_offset for symbol XNextEven */
+    0x3f92028,   /* hand: gui::detailed_waveform::DispStateHolder static zoom (u16 num, u16 den; .data 01 00 0 */
     0x3f953b8,   /* xref 2/2 agree */
     0x3f95bd0,   /* xref 2/2 agree */
     0x3f95c48,   /* xref 2/2 agree */
@@ -1338,6 +1383,8 @@ static int ep147_addr_init(int build){
 #define EP_1d6bc60 ((uintptr_t)ep147_addr[EPI_1d6bc60])
 #define EP_1d6bff0 ((uintptr_t)ep147_addr[EPI_1d6bff0])
 #define EP_1d6f280 ((uintptr_t)ep147_addr[EPI_1d6f280])
+#define EP_1d76f18 ((uintptr_t)ep147_addr[EPI_1d76f18])
+#define EP_1d77468 ((uintptr_t)ep147_addr[EPI_1d77468])
 #define EP_1d82b08 ((uintptr_t)ep147_addr[EPI_1d82b08])
 #define EP_1d9fb68 ((uintptr_t)ep147_addr[EPI_1d9fb68])
 #define EP_1da09b0 ((uintptr_t)ep147_addr[EPI_1da09b0])
@@ -1374,6 +1421,7 @@ static int ep147_addr_init(int build){
 #define EP_1e02d18 ((uintptr_t)ep147_addr[EPI_1e02d18])
 #define EP_1e06450 ((uintptr_t)ep147_addr[EPI_1e06450])
 #define EP_1e071a0 ((uintptr_t)ep147_addr[EPI_1e071a0])
+#define EP_1e27d28 ((uintptr_t)ep147_addr[EPI_1e27d28])
 #define EP_1e461f8 ((uintptr_t)ep147_addr[EPI_1e461f8])
 #define EP_1e46af0 ((uintptr_t)ep147_addr[EPI_1e46af0])
 #define EP_1e678f0 ((uintptr_t)ep147_addr[EPI_1e678f0])
@@ -1421,16 +1469,19 @@ static int ep147_addr_init(int build){
 #define EP_230d790 ((uintptr_t)ep147_addr[EPI_230d790])
 #define EP_230e3e0 ((uintptr_t)ep147_addr[EPI_230e3e0])
 #define EP_230f530 ((uintptr_t)ep147_addr[EPI_230f530])
+#define EP_230f5c0 ((uintptr_t)ep147_addr[EPI_230f5c0])
 #define EP_2333ce0 ((uintptr_t)ep147_addr[EPI_2333ce0])
 #define EP_233c340 ((uintptr_t)ep147_addr[EPI_233c340])
 #define EP_2398900 ((uintptr_t)ep147_addr[EPI_2398900])
 #define EP_239cda0 ((uintptr_t)ep147_addr[EPI_239cda0])
 #define EP_23a2e60 ((uintptr_t)ep147_addr[EPI_23a2e60])
 #define EP_23a45f0 ((uintptr_t)ep147_addr[EPI_23a45f0])
+#define EP_23a54e0 ((uintptr_t)ep147_addr[EPI_23a54e0])
 #define EP_23aee40 ((uintptr_t)ep147_addr[EPI_23aee40])
 #define EP_23aeef0 ((uintptr_t)ep147_addr[EPI_23aeef0])
 #define EP_23aef40 ((uintptr_t)ep147_addr[EPI_23aef40])
 #define EP_23af140 ((uintptr_t)ep147_addr[EPI_23af140])
+#define EP_23af590 ((uintptr_t)ep147_addr[EPI_23af590])
 #define EP_23af680 ((uintptr_t)ep147_addr[EPI_23af680])
 #define EP_23af6c0 ((uintptr_t)ep147_addr[EPI_23af6c0])
 #define EP_23afeb0 ((uintptr_t)ep147_addr[EPI_23afeb0])
@@ -1440,6 +1491,7 @@ static int ep147_addr_init(int build){
 #define EP_23b1440 ((uintptr_t)ep147_addr[EPI_23b1440])
 #define EP_23b4be0 ((uintptr_t)ep147_addr[EPI_23b4be0])
 #define EP_23de290 ((uintptr_t)ep147_addr[EPI_23de290])
+#define EP_23eb200 ((uintptr_t)ep147_addr[EPI_23eb200])
 #define EP_23ed7c0 ((uintptr_t)ep147_addr[EPI_23ed7c0])
 #define EP_23ee2a0 ((uintptr_t)ep147_addr[EPI_23ee2a0])
 #define EP_23f1370 ((uintptr_t)ep147_addr[EPI_23f1370])
@@ -1448,13 +1500,16 @@ static int ep147_addr_init(int build){
 #define EP_2401dd0 ((uintptr_t)ep147_addr[EPI_2401dd0])
 #define EP_2402ff0 ((uintptr_t)ep147_addr[EPI_2402ff0])
 #define EP_242d0a0 ((uintptr_t)ep147_addr[EPI_242d0a0])
+#define EP_2437090 ((uintptr_t)ep147_addr[EPI_2437090])
 #define EP_243d1d0 ((uintptr_t)ep147_addr[EPI_243d1d0])
 #define EP_243d200 ((uintptr_t)ep147_addr[EPI_243d200])
 #define EP_2459540 ((uintptr_t)ep147_addr[EPI_2459540])
 #define EP_2459640 ((uintptr_t)ep147_addr[EPI_2459640])
 #define EP_24597e0 ((uintptr_t)ep147_addr[EPI_24597e0])
 #define EP_2465c70 ((uintptr_t)ep147_addr[EPI_2465c70])
+#define EP_2471200 ((uintptr_t)ep147_addr[EPI_2471200])
 #define EP_2482f30 ((uintptr_t)ep147_addr[EPI_2482f30])
+#define EP_2485140 ((uintptr_t)ep147_addr[EPI_2485140])
 #define EP_2485d40 ((uintptr_t)ep147_addr[EPI_2485d40])
 #define EP_2488570 ((uintptr_t)ep147_addr[EPI_2488570])
 #define EP_248a250 ((uintptr_t)ep147_addr[EPI_248a250])
@@ -1463,6 +1518,7 @@ static int ep147_addr_init(int build){
 #define EP_248bfc0 ((uintptr_t)ep147_addr[EPI_248bfc0])
 #define EP_2491ed0 ((uintptr_t)ep147_addr[EPI_2491ed0])
 #define EP_24924f0 ((uintptr_t)ep147_addr[EPI_24924f0])
+#define EP_249a4b0 ((uintptr_t)ep147_addr[EPI_249a4b0])
 #define EP_249d6b0 ((uintptr_t)ep147_addr[EPI_249d6b0])
 #define EP_249daf0 ((uintptr_t)ep147_addr[EPI_249daf0])
 #define EP_249efe0 ((uintptr_t)ep147_addr[EPI_249efe0])
@@ -1541,6 +1597,8 @@ static int ep147_addr_init(int build){
 #define EP_2b7f408 ((uintptr_t)ep147_addr[EPI_2b7f408])
 #define EP_2b7f588 ((uintptr_t)ep147_addr[EPI_2b7f588])
 #define EP_2b7f6d8 ((uintptr_t)ep147_addr[EPI_2b7f6d8])
+#define EP_2b88870 ((uintptr_t)ep147_addr[EPI_2b88870])
+#define EP_2b88a48 ((uintptr_t)ep147_addr[EPI_2b88a48])
 #define EP_2b9eb88 ((uintptr_t)ep147_addr[EPI_2b9eb88])
 #define EP_2bcc810 ((uintptr_t)ep147_addr[EPI_2bcc810])
 #define EP_2bcdec0 ((uintptr_t)ep147_addr[EPI_2bcdec0])
@@ -1554,6 +1612,7 @@ static int ep147_addr_init(int build){
 #define EP_2cd4b28 ((uintptr_t)ep147_addr[EPI_2cd4b28])
 #define EP_2ce30d0 ((uintptr_t)ep147_addr[EPI_2ce30d0])
 #define EP_2ce7c50 ((uintptr_t)ep147_addr[EPI_2ce7c50])
+#define EP_2cedcf8 ((uintptr_t)ep147_addr[EPI_2cedcf8])
 #define EP_2cee580 ((uintptr_t)ep147_addr[EPI_2cee580])
 #define EP_2cfe0f0 ((uintptr_t)ep147_addr[EPI_2cfe0f0])
 #define EP_2cfe5c0 ((uintptr_t)ep147_addr[EPI_2cfe5c0])
@@ -1614,6 +1673,7 @@ static int ep147_addr_init(int build){
 #define EP_315e560 ((uintptr_t)ep147_addr[EPI_315e560])
 #define EP_3480128 ((uintptr_t)ep147_addr[EPI_3480128])
 #define EP_3b25a60 ((uintptr_t)ep147_addr[EPI_3b25a60])
+#define EP_3b32488 ((uintptr_t)ep147_addr[EPI_3b32488])
 #define EP_3b35728 ((uintptr_t)ep147_addr[EPI_3b35728])
 #define EP_3b35f40 ((uintptr_t)ep147_addr[EPI_3b35f40])
 #define EP_3b35fb8 ((uintptr_t)ep147_addr[EPI_3b35fb8])

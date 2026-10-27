@@ -32,7 +32,7 @@ static int overlays_rows(int head, int *out) {
     for (int p = 0; p < n && m < OVERLAYS_MAX; p++)
         if (az_parent(ord[p]) == head && !(az_row(ord[p])->d.flags & AZ_ROW_HIDDEN)) {
             out[m++] = ord[p];
-            if (ord[p] == AZF_CLOCK_24H && m + 1 < OVERLAYS_MAX) {
+            if (ord[p] == AZF_CLOCK_SECONDS && m + 1 < OVERLAYS_MAX) {
                 out[m++] = C_TZ_ROW;
                 out[m++] = C_SET_ROW;
             }
@@ -587,13 +587,62 @@ uint64_t g_azmod_clockn_rect; /* menu.h: written by clock_native.c; __atomic onl
 uint32_t g_azmod_clockn_ink, g_azmod_clockn_ground;
 #define CLOCKN_PX 13
 #define CLOCKN_BORDER 5
+#define C_CT_RED 0x00FF0000u /* EP147's red (its "Not Loaded." text, measured on the stock theme) */
+static struct ct_timer g_ct;
+static long ct_now_ms(void);
 bool azmod_clockn_on(const azmod_state *s) {
     return azmod_stat_on(s, AZF_CLOCK) && __atomic_load_n(&g_azmod_clockn_rect, __ATOMIC_ACQUIRE) != 0;
 }
+/* The width the widest time of the current format takes, the border on both sides included: its
+ * widest digit in every place, two hour digits, AM or PM, " UTC" when the zone is UTC (as
+ * mod_menu_overlay.c ov_poll_clock writes it). It depends on the format only, so the window keeps
+ * one size while the time runs. 0 = no font. Overlay thread only (its one caller). */
+static int clockn_text_w(void) {
+    static int key = -1, cw;
+    int h24 = az_get(AZF_CLOCK_24H) == 1, sec = az_get(AZF_CLOCK_SECONDS) == 1, utc = clock_tz_get() == 0;
+    int k = h24 | sec << 1 | utc << 2;
+    if (k == key)
+        return cw;
+    cw = 0;
+    if (azmod_ttf_menu_width) {
+        char d = '0', t[24];
+        int best = 0;
+        for (char c = '0'; c <= '9'; c++) {
+            int dw = azmod_ttf_menu_width(&c, 1, CLOCKN_PX, 0);
+            if (dw > best)
+                best = dw, d = c;
+        }
+        for (int pm = 0; pm < (h24 ? 1 : 2); pm++) {
+            int n = snprintf(t, sizeof t, "%c%c:%c%c", d, d, d, d);
+            if (sec)
+                n += snprintf(t + n, sizeof t - (size_t) n, ":%c%c", d, d);
+            snprintf(t + n, sizeof t - (size_t) n, "%s%s", h24 ? "" : pm ? " PM"
+                                                                         : " AM",
+                     utc ? " UTC" : "");
+            int tw = azmod_ttf_menu_width(t, (int) strlen(t), CLOCKN_PX, 0);
+            if (tw > 0 && tw + 2 * CLOCKN_BORDER > cw)
+                cw = tw + 2 * CLOCKN_BORDER;
+        }
+        /* the Timer's countdown in the same place: its longest text, h:mm:ss */
+        snprintf(t, sizeof t, "%c:%c%c:%c%c", d, d, d, d, d);
+        int tw = azmod_ttf_menu_width(t, (int) strlen(t), CLOCKN_PX, 0);
+        if (tw > 0 && tw + 2 * CLOCKN_BORDER > cw)
+            cw = tw + 2 * CLOCKN_BORDER;
+    }
+    key = k;
+    return cw;
+}
+/* EP147's label rect, widened to the right (never past the screen edge) when the time needs more
+ * room than the label's 68 px: seconds with AM/PM, or the UTC suffix. */
 void azmod_clockn_rect(const azmod_fb *fb, int *x, int *y, int *w, int *h) {
-    (void) fb;
-    if (!cn_rect_unpack(__atomic_load_n(&g_azmod_clockn_rect, __ATOMIC_ACQUIRE), x, y, w, h))
+    if (!cn_rect_unpack(__atomic_load_n(&g_azmod_clockn_rect, __ATOMIC_ACQUIRE), x, y, w, h)) {
         *x = *y = -16, *w = *h = 1;
+        return;
+    }
+    int need = clockn_text_w();
+    if (need > *w)
+        *w = need < fb->w - *x ? need : fb->w - *x > *w ? fb->w - *x
+                                                        : *w;
 }
 void azmod_draw_clockn(const azmod_state *s, const azmod_fb *fb) {
     int x, y, w, h;
@@ -602,8 +651,103 @@ void azmod_draw_clockn(const azmod_state *s, const azmod_fb *fb) {
              ground = __atomic_load_n(&g_azmod_clockn_ground, __ATOMIC_RELAXED) & 0xffffffu;
     fill_rect(fb, x, y, w, h, ground);
     const char *t = s->clock_text[0] ? s->clock_text : "--:--";
+    char cd[16];
+    struct ct_view v = ct_view(&g_ct, ct_now_ms());
+    if (v.show != CT_SHOW_CLOCK) { /* the Timer's countdown replaces the time of day */
+        ct_format(v.secs, cd, sizeof cd);
+        t = cd;
+        if (v.red)
+            ink = C_CT_RED;
+    }
     if (!azmod_ttf_menu || !azmod_ttf_menu(fb, x + CLOCKN_BORDER, y, 0, h, t, CLOCKN_PX, 0, 0, ink))
         draw_text(fb, x + CLOCKN_BORDER, y + (h - 7) / 2, t, 1, ink);
+}
+
+/* The Clock's countdown Timer (clock_timer.h). A tap on the Clock opens a small popup under it
+ * (add 1, 5, 10 or 30 minutes, Start, Reset, Close; over a running countdown the adds extend it
+ * and Stop ends it). While it runs, the countdown is drawn in the Clock's place, in its face and
+ * size; the last minute flashes EP147's red, and at zero 0:00 flashes for CT_DONE_MS before the
+ * time of day comes back. Kept in CLOCK_MONOTONIC, so setting the clock or the zone never moves
+ * it; it lives in memory only (an EP147 restart ends it). Overlay thread only: the taps arrive in
+ * its event loop and it draws. */
+static struct ct_popup g_ctp;
+static long ct_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+int azmod_clockn_key(void) {
+    struct ct_view v = ct_view(&g_ct, ct_now_ms());
+    return v.show == CT_SHOW_CLOCK ? -1 : v.secs * 4 + (int) v.show * 2 + v.red;
+}
+void azmod_clockn_tap(const azmod_state *s, const azmod_fb *fb) {
+    (void) fb;
+    if (g_ctp.open)
+        g_ctp.open = 0; /* a second tap on the Clock closes it, as Close does */
+    else if (azmod_clockn_on(s))
+        ct_popup_open(&g_ctp, &g_ct, ct_now_ms());
+}
+/* the popup's layout under the Clock, 0 when it is not shown (closed, the Clock gone, no room) */
+static int ct_geom_now(const azmod_fb *fb, struct ct_geom *g) {
+    int x, y, w, h;
+    if (!cn_rect_unpack(__atomic_load_n(&g_azmod_clockn_rect, __ATOMIC_ACQUIRE), &x, &y, &w, &h))
+        return 0;
+    azmod_clockn_rect(fb, &x, &y, &w, &h);
+    return ct_layout(x, y, w, h, fb->w, fb->h, g_ctp.running, g);
+}
+int azmod_ctpop_rect(const azmod_state *s, const azmod_fb *fb, int *x, int *y, int *w, int *h) {
+    struct ct_geom g;
+    if (g_ctp.open && !azmod_clockn_on(s))
+        g_ctp.open = 0; /* the Clock went (recording, a banner, switched off): so does its popup */
+    ct_popup_sync(&g_ctp, &g_ct, ct_now_ms());
+    if (!g_ctp.open || !ct_geom_now(fb, &g))
+        return 0;
+    *x = g.box.x;
+    *y = g.box.y;
+    *w = g.box.w;
+    *h = g.box.h;
+    return 1;
+}
+void azmod_ctpop_tap(const azmod_fb *fb, int x, int y) {
+    struct ct_geom g;
+    if (g_ctp.open && ct_geom_now(fb, &g))
+        ct_popup_press(&g_ctp, &g_ct, ct_hit(&g, &g_ctp, x, y), ct_now_ms());
+}
+void azmod_draw_ctpop(const azmod_fb *fb) {
+    struct ct_geom g;
+    if (!g_ctp.open || !ct_geom_now(fb, &g))
+        return;
+    long now = ct_now_ms();
+    /* The Mod Menu's look: its pane gray, a header band with a divider under the title, and its
+     * square choice buttons (an orange fill for the one action that is lit). */
+    int band = g.value.y - g.box.y; /* the header band: the box's top padding and the title row */
+    fill_rect(fb, g.box.x, g.box.y, g.box.w, g.box.h, C_MENU_SCRIM);
+    fill_rect(fb, g.box.x, g.box.y, g.box.w, band, C_HEADER_BG);
+    fill_rect(fb, g.box.x, g.box.y + band - 2, g.box.w, 2, C_DIVIDER);
+    draw_rect_outline(fb, g.box.x, g.box.y, g.box.w, g.box.h, 2, C_CHECK_BOX);
+    if (!azmod_ttf_menu ||
+        !azmod_ttf_menu(fb, g.title.x, g.box.y, 0, band, "Timer", g.px_title, 0, 2, C_TEXT))
+        draw_text(fb, g.title.x, g.box.y + (band - 14) / 2, "Timer", 2, C_TEXT);
+    char t[16];
+    ct_format(ct_popup_secs(&g_ctp, &g_ct, now), t, sizeof t);
+    if (!azmod_ttf_menu || !azmod_ttf_menu(fb, g.value.x, g.value.y, g.value.w, g.value.h, t, g.px_value, 0, 2, C_TEXT))
+        draw_text_centered(fb, g.value.x, g.value.y + (g.value.h - 28) / 2, g.value.w, t, 4, C_TEXT);
+    for (int b = 0; b < CT_B_N; b++) {
+        if (!ct_button_shown(&g_ctp, b))
+            continue;
+        const struct ct_rect *r = &g.btn[b];
+        int on = ct_button_enabled(&g_ctp, b), primary = b == CT_B_START;
+        int lit = primary && on;
+        uint32_t ink = lit ? C_HI_TEXT : on ? C_TEXT
+                                            : C_STEM_OFF_FG;
+        if (lit)
+            fill_rect(fb, r->x, r->y, r->w, r->h, C_HI);
+        else
+            draw_rect_outline(fb, r->x, r->y, r->w, r->h, 2, on ? C_CHECK_BOX : C_STEM_OFF_FG);
+        const char *l = ct_button_label(&g_ctp, b);
+        if (!azmod_ttf_menu || !azmod_ttf_menu(fb, r->x, r->y, r->w, r->h, l, g.px_btn, 0, 2, ink))
+            draw_text_centered(fb, r->x, r->y + (r->h - 14) / 2, r->w, l, 2, ink);
+    }
 }
 
 /* The readouts, left to right, and each one's slot width (fraction of 1280),

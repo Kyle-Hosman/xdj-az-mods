@@ -188,9 +188,9 @@ int main(void) {
     {
         int cr[OVERLAYS_MAX], cn = overlays_rows(AZF_CLOCK, cr), orow[OVERLAYS_MAX], on = overlays_rows(AZF_OVERLAYS, orow), clean = 1;
         for (int r = 0; r < on; r++)
-            clean &= orow[r] != AZF_CLOCK && orow[r] != AZF_CLOCK_24H && orow[r] != C_TZ_ROW;
+            clean &= orow[r] != AZF_CLOCK && orow[r] != AZF_CLOCK_24H && orow[r] != AZF_CLOCK_SECONDS && orow[r] != C_TZ_ROW;
         CHECK("the Clock row is Extras' and opens its own screen", az_parent(AZF_CLOCK) == AZF_EXTRAS && sub_screen(AZF_CLOCK) == AZ_CLOCK);
-        CHECK("its screen: the switch, the time format, the time zone, the time", cn == 4 && cr[0] == AZF_CLOCK && cr[1] == AZF_CLOCK_24H && cr[2] == C_TZ_ROW && cr[3] == C_SET_ROW);
+        CHECK("its screen: the switch, the time format, the seconds, the time zone, the time", cn == 5 && cr[0] == AZF_CLOCK && cr[1] == AZF_CLOCK_24H && cr[2] == AZF_CLOCK_SECONDS && cr[3] == C_TZ_ROW && cr[4] == C_SET_ROW);
         CHECK("Overlays has none of the Clock's rows", clean);
     }
 

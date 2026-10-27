@@ -48,6 +48,22 @@ AZ_FEATURE( STEMS,             "stems",                      "Stems",           
 AZ_FEATURE( STEM_PADS_PAGE,    "stem-pads-page",             "Stems on BEAT LOOP 2",       STEMS,        AZ_ROW_CHOICE,  0,                              21,
             .pane_label = "Stem pads replace:", .d.choices = AZ_CHOICES("BEAT LOOP", "BEAT LOOP 2"),
             .d.help = "Which pad mode shows the stems. The other one keeps its loop pads.")
+/* Bottom Stem Pads: pads 5-8 on the stems page. Waveform (default) = the stem waveforms on the
+ * bottom row, the pads SOLO a stem; FX = Stem FX (VOCAL ECHO, INST ECHO, INST BRAKE, DRUMS ECHO;
+ * stem_fx_pads.h, azstem stem_fx.c) with EP147's own art on the bottom row. Read live. */
+AZ_FEATURE( STEM_FX,           "stem-pads-fx",               "Bottom Stem Pads",           STEMS,        AZ_ROW_CHOICE,  0,                              -1,
+            .pane_label = "Bottom stem pads:", .d.choices = AZ_CHOICES("Waveform", "FX"),
+            .d.help = "FX: tap to latch, hold for a momentary effect.")
+/* the echo's delay, in beats of the deck's beat grid */
+AZ_FEATURE( STEM_FX_ECHO,      "stem-fx-echo-length",        "Echo Length",                STEM_FX,      AZ_ROW_CHOICE,  0,                              -1,
+            .pane_label = "Echo length (beats):", .d.choices = AZ_CHOICES("1/4", "1/2", "3/4", "1"),
+            .d.default_choice = 1,
+            .d.help = "The time between echoes, in beats.")
+/* how long the brake takes to stop, in beats of the deck's beat grid */
+AZ_FEATURE( STEM_FX_BRAKE,     "stem-fx-brake-length",       "Brake Length",               STEM_FX,      AZ_ROW_CHOICE,  0,                              -1,
+            .pane_label = "Brake length (beats):", .d.choices = AZ_CHOICES("1/2", "1", "2", "4"),
+            .d.default_choice = 2,
+            .d.help = "How long the brake takes to stop, in beats.")
 /* MENU > MAKE STEMS sends a track or a playlist to the AZ-MODS app, which makes the stems and
  * writes them back to the USB. */
 AZ_FEATURE( REMOTE_STEMS,      "remote-stems",               "Remote Stems",               STEMS,        AZ_ROW_TOGGLE,  AZ_ROW_DEFAULT_ON,              24,
@@ -129,6 +145,9 @@ AZ_FEATURE( CLOCK,             "overlay-clock",              "Clock",           
             .d.help = "The time of day, top right, while not recording.")
 AZ_FEATURE( CLOCK_24H,         "overlay-clock-24h",          "Time Format",                CLOCK,        AZ_ROW_CHOICE,  0,                              -1,
             .d.choices = AZ_CHOICES("12-hour", "24-hour"))
+/* seconds in the Clock's text: h:mm:ss (12-hour) or HH:MM:SS (24-hour) */
+AZ_FEATURE( CLOCK_SECONDS,     "overlay-clock-seconds",      "Show Seconds",               CLOCK,        AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "Add the seconds to the Clock.")
 /*          ENUM               label                         parent        kind            flags                          screen */
 AZ_ACTION(  PAD_COLORS,        "Pad Colors",                 EXTRAS,       AZ_ROW_SCREEN,  0,                             AZ_COLORS,
             .d.help = "Choose the colors of the pad mode buttons.")
@@ -161,6 +180,10 @@ AZ_FEATURE( BT_REMEMBER_CHANNEL, "bt-remember-channel",        "Remember Selecte
 /* (from the CDJ-3000X) a tap on a deck's track-info bar hides / shows its title */
 AZ_FEATURE( HIDE_TRACK_TITLE,  "hide-track-title",           "Hide Track Title",           EXTRAS,       AZ_ROW_TOGGLE,  0,                              35,
             .d.help = "Tap a deck's track title to hide it or show it again.")
+/* each deck's key (as its tray's KEY shows it) at the right end of its title row
+ * (extras.c, Key in Track Title) */
+AZ_FEATURE( DECK_KEY_TITLE,    "deck-key-title",             "Key in Track Title",         EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "Shows each deck's key at the end of its track title. Tap it for key shift.")
 /* (from the CDJ-3000X) two bar rulers between the decks' waveforms, from EP147's own
  * usecase::phase_meter */
 AZ_FEATURE( PHASE_METER,       "phase-meter",                "Phase Meter",                EXTRAS,       AZ_ROW_TOGGLE,  0,                              36,
@@ -172,6 +195,10 @@ AZ_FEATURE( EXTENDED_LEAD_IN, "extended-lead-in",      "Extended Lead-In",      
  * in Camelot (streaming_key.c) */
 AZ_FEATURE( CAMELOT_KEYS,      "camelot-keys",               "Camelot Keys",               EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "Streaming tracks' keys in Camelot, like 8A.")
+/* the detailed waveform's zoom (one for all decks) is saved when it changes and set again at
+ * start-up (wave_zoom.c) */
+AZ_FEATURE( WAVE_ZOOM,         "remember-waveform-zoom",     "Remember Waveform Zoom",     EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "Keeps the waveform zoom you set when the deck restarts.")
 
 AZ_ACTION(  COMMUNITY,         "Community Mods",             NONE,         AZ_ROW_SCREEN,  0,                             AZ_COMMUNITY)
 

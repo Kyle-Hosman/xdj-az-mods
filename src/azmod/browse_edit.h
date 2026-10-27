@@ -264,4 +264,49 @@ static inline int be_tap(int editing, int id, unsigned fixed, int sub_id) {
     return BE_TAP_NONE;
 }
 
+/* The search bar's inner widgets (one for the library search, one for the track filter) and
+ * their children are placed once by EP147 with literal bounds, and nothing places them again when
+ * the bar is resized: a narrower bar only clips its right end, where the clear button is. When
+ * the bar gives up `sh` pixels, an inner widget loses sh of its width, the buttons at its right
+ * end move left by sh and the text editor loses sh of its width. */
+#define BE_SEARCH_W 544 /* the bar's stock width */
+#define BE_SEARCH_H 50
+#define BE_SEARCH_STEP 118 /* the bar only ever gives up a multiple of this */
+#define BE_SEARCH_STEPS 2
+enum {
+    BE_SK_STRETCH,
+    BE_SK_MOVE
+};
+static const struct {
+    int16_t x, y, w, h;
+    uint8_t kind;
+} BE_SEARCH_KIDS[] = {
+    {0, 0, BE_SEARCH_W, BE_SEARCH_H, BE_SK_STRETCH}, /* an inner widget */
+    {511, 13, 25, 24, BE_SK_MOVE},                   /* library search: the clear button */
+    {56, 9, 448, 40, BE_SK_STRETCH},                 /* library search: the text editor */
+    {427, 13, 25, 24, BE_SK_MOVE},                   /* track filter: its two buttons */
+    {466, 0, 78, 50, BE_SK_MOVE},
+    {0, 9, 426, 40, BE_SK_STRETCH}, /* track filter: the text editor */
+};
+/* r: a child's bounds now, as EP147 placed it or as an earlier call moved it. Returns 1 with
+ * out set to its bounds for a bar narrowed by sh, or 0 when r is none of the stock children at
+ * any of the bar's widths (it is then left as it is). */
+static inline int be_search_kid(const int r[4], int sh, int out[4]) {
+    if (sh < 0 || sh > BE_SEARCH_STEP * BE_SEARCH_STEPS)
+        return 0;
+    for (size_t i = 0; i < sizeof BE_SEARCH_KIDS / sizeof BE_SEARCH_KIDS[0]; i++)
+        for (int k = 0; k <= BE_SEARCH_STEPS; k++) {
+            int was = k * BE_SEARCH_STEP, mv = BE_SEARCH_KIDS[i].kind == BE_SK_MOVE;
+            if (r[0] != BE_SEARCH_KIDS[i].x - (mv ? was : 0) || r[1] != BE_SEARCH_KIDS[i].y ||
+                r[2] != BE_SEARCH_KIDS[i].w - (mv ? 0 : was) || r[3] != BE_SEARCH_KIDS[i].h)
+                continue;
+            out[0] = BE_SEARCH_KIDS[i].x - (mv ? sh : 0);
+            out[1] = BE_SEARCH_KIDS[i].y;
+            out[2] = BE_SEARCH_KIDS[i].w - (mv ? 0 : sh);
+            out[3] = BE_SEARCH_KIDS[i].h;
+            return 1;
+        }
+    return 0;
+}
+
 #endif

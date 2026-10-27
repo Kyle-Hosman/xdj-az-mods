@@ -60,7 +60,7 @@ OBJCOPY ?= objcopy
 # from the deck's firmware, and the library key), which the public source tree does not ship and
 # its tools/extract-assets.py copies out of an official azmod.so by name. The list is those
 # headers' identifiers that are data symbols of this build, so it follows the headers.
-AZMOD_ASSET_HDRS := $(addprefix azmod/,caption_strips.h fxart.h fxhdr.h fxbars.h menulabels.h collabels.h stems4art.h srcref.h wavref.h onelibkey.h onelibkey_sm.h)
+AZMOD_ASSET_HDRS := $(addprefix azmod/,caption_strips.h fxart.h fxhdr.h fxbars.h holdtile.h sfxtile.h menulabels.h collabels.h stems4art.h srcref.h wavref.h onelibkey.h onelibkey_sm.h)
 ifeq ($(AZMOD_RELEASE),1)
 az_strip = $(STRIP) --strip-unneeded -o $(1) $(1).full
 az_strip_keep_assets = nm --defined-only $(1).full | awk '$$2 ~ /^[rRdD]$$/ {print $$3}' | sort -u > $(1).objs && \

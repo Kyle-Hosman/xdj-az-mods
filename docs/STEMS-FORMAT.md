@@ -32,13 +32,12 @@ writers do, which keeps a set interchangeable with theirs.
 | Rule | Detail |
 |---|---|
 | `STEMS` | a directory at the root of the USB, name matched ignoring ASCII case |
-| Older layout | `<stick>/_MixRack_library/MixRack-stems/`, same folder and file rules. New sets go in `STEMS/` |
-| USBs searched | on every track load, every entry one level below `/media/usb`, `/run/media`, `/mnt` and `/media`, in both layouts. A track's stems may be on a different USB from the track |
+| USBs searched | on every track load, every entry one level below `/media/usb`, `/run/media`, `/mnt` and `/media`. A track's stems may be on a different USB from the track |
 | Dot names | entries whose name starts with `.` are skipped everywhere: USB folders, stem folders, files |
 
 **When stems are active.** azstem looks for a stems tree about every 5 seconds until it
-finds one: a non-empty `STEMS/` (at least one entry not starting with `.`) or an older-layout
-folder on any mounted USB. Until then no track loads stems. Once found, it stays found
+finds one: a non-empty `STEMS/` (at least one entry not starting with `.`) on any mounted
+USB. Until then no track loads stems. Once found, it stays found
 for the rest of the session, and each track load searches every USB as above.
 
 ## The track key
@@ -71,7 +70,7 @@ compared ignoring ASCII case:
 |---|---|---|
 | 0 | `<key>` | the normal case |
 | 1 | `<key>_` | a key the USB cannot store as written |
-| 2 | `<key>-XXXXXXXX` | `XXXXXXXX` is exactly 8 hex digits, either case: a second song with the same file name, or the older layout's sets |
+| 2 | `<key>-XXXXXXXX` | `XXXXXXXX` is exactly 8 hex digits, either case: a second song with the same file name |
 
 Nothing else matches. A bare prefix does not: the folder `Song (Extended)` never
 belongs to the track `Song.mp3`, and neither does `Song-v2` or `Song_1`.
@@ -115,15 +114,13 @@ accepted, and `source.json` decides which song a set belongs to.
 
 ## How the deck chooses a folder
 
-On each track load the deck collects every matching folder on every USB and in both
-layouts, checks each one's identity against the loaded file (see
+On each track load the deck collects every matching folder on every USB, checks each one's identity against the loaded file (see
 [How identity is decided](#how-identity-is-decided)), discards any made from a
 different file, and keeps the best of the rest by, in order:
 
 1. identity proven before identity unknown;
 2. on the same USB as the track's file before on another USB;
-3. name rank, 0 before 1 before 2;
-4. `STEMS/` before the older layout.
+3. name rank, 0 before 1 before 2.
 
 On a full tie, the first folder found in directory order wins.
 
@@ -132,7 +129,7 @@ with no `.ogg` files in it wins over a complete set that ranks lower, and the tr
 plays without stems. See [Writing a folder safely](#writing-a-folder-safely).
 
 The browser's stems mark uses the same rules, but reads each stems directory listing
-(both layouts) from a cache that is refreshed when the directory's modification time or
+from a cache that is refreshed when the directory's modification time or
 size changes, or after 60 seconds.
 
 ## Stem files
@@ -391,7 +388,7 @@ How the current writers do it:
 
 | Item | Deck | AZ-MODS app |
 |---|---|---|
-| `STEMS/` at the USB root (any case) | required (or the older layout) | required |
+| `STEMS/` at the USB root (any case) | required | required |
 | Folder named `<key>`, `<key>_` or `<key>-XXXXXXXX` | required | required |
 | At least one decodable role | required | all four required to count as made |
 | File names `vocals.ogg`, `other.ogg`, `bass.ogg`, `drums.ogg` | substring match is enough | exact names (`vocals`, `other`, `bass`, `drums`) |

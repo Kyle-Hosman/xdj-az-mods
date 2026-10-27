@@ -27,6 +27,10 @@ static _Atomic int g_drum_arm = 0;                  /* mod 6 enabled */
 static int g_drum_held[AZMOD_STEM_DECKS] = {
     0}; /* pad 8 latch: this deck armed; written by the bus thread and the
            overlay (mod off), so every access is __atomic */
+/* Pad 7 HOLD per deck (DRUM_HOLD_ON | DRUM_HOLD_SUSTAIN, bus_interpose.c drum_hold_pads).
+ * Written by the ErP and mixer bus readers, which run on different threads, so every access
+ * is __atomic. */
+static int g_drum_hold[AZMOD_STEM_DECKS];
 static _Atomic unsigned g_caption_repaint;      /* per-deck bit: caption needs a re-run */
 static volatile unsigned g_drum_sel_led[AZMOD_STEM_DECKS] = {0, 0}; /* pads 1-4, for the LED */
 /* azstem's exported control surface, resolved by dlsym at overlay init. NULL
@@ -46,6 +50,7 @@ static void (*g_stem_eq_fn)(int, int, int,
 static int (*g_deck_has_track_fn)(
     int); /* azstem_deck_has_track: deck 3/4 in use -> CH3/4 are deck channels */
 static int (*g_stem_gain_fn)(int, int); /* azstem_stem_gain: what Stem Volume plays, x1000 */
+static void (*g_sfx_config_fn)(int, int, int); /* azstem_stem_fx_config: Stem FX mode and lengths */
 static _Atomic int g_stemeq_knobs[2] = {
     -1, -1}; /* bus thread: (hi << 20) | (mid << 10) | low, -1 = not moved since start */
 static _Atomic int g_stemeq_tlm[2] = {
@@ -131,6 +136,7 @@ static void drum_disarm_all(const char *why) {
         if (__atomic_load_n(&g_drum_held[d], __ATOMIC_RELAXED) && gate)
             gate(d, 0);
         __atomic_store_n(&g_drum_held[d], 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_drum_hold[d], 0, __ATOMIC_RELAXED); /* a disarm ends HOLD */
     }
     FILE *f = azlog_open("/tmp/azmod-drumtile.log", "a");
     if (f) {
@@ -147,6 +153,7 @@ static void drum_disarm_others(int keep, const char *why) {
         if (d == keep || !__atomic_load_n(&g_drum_held[d], __ATOMIC_RELAXED))
             continue;
         __atomic_store_n(&g_drum_held[d], 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_drum_hold[d], 0, __ATOMIC_RELAXED); /* a disarm ends HOLD */
         __atomic_fetch_or(&g_caption_repaint, 1u << d, __ATOMIC_RELEASE);
         void (*gate)(int, int) = __atomic_load_n(&g_drum_gate_fn, __ATOMIC_ACQUIRE);
         if (gate)
@@ -825,13 +832,20 @@ static _Atomic int g_drum_tile_repaint;      /* raised by the index apply, drain
 static _Atomic long g_dg8_stem[DGRID_GRIDS]; /* slot-7 PadStemWidget per grid */
 static unsigned g_dg8_idx_refused = 0;       /* out-of-range art-index writes refused */
 static int g_dg8_idx_logged = -1;
+/* stems_display.c: per-deck requests to re-run the stem tiles' refresh (message thread drains) */
+static _Atomic unsigned g_tiles_poke_req;
 /* Message thread (rtick), the thread that builds and frees these widgets. Nothing cached is
  * trusted: each pass starts from the slot-7 tile captured in its ctor (g_slot7_w), proves it by
  * vtable, and re-derives the stem child and its ImagesComponent from it, each proven by vtable,
  * before the one write. g_dg8_stem (from the same ctor) must still match the re-derived child:
  * a tile rebuilt since then is skipped until its ctor recaptures it. The deck comes from the
- * tile's own deckstate (+0xd0); an unknown deck leaves the tile alone. */
+ * tile's own deckstate (+0xd0); an unknown deck leaves the tile alone.
+ * The tile belongs to the drum roll only while it is latched: unlatched, the same slot is the
+ * stems page's DRUMS ECHO tile, whose index EP147 and Stem FX (stem_tile_fix_one) set. So the
+ * normal index is written once, on the release of a latch this code showed, and the stem tiles
+ * of that deck are then refreshed so an effect that is on shows again. */
 static void drum8_index_apply(void) {
+    static unsigned char shown[DGRID_GRIDS]; /* this grid's tile shows the latch (0x18) */
     int changed = 0;
     for (int g = 0; g < DGRID_GRIDS && g < SLOT7_MAX; g++) {
         long w = (long) wref_get(WSLOT(&g_slot7_w[g])); /* wref: 0 once the tile is destroyed */
@@ -850,6 +864,8 @@ static void drum8_index_apply(void) {
             continue; /* unknown deck: never another deck's latch */
         int armed = __atomic_load_n(&g_drum_held[gdeck], __ATOMIC_RELAXED);
         int want = (__atomic_load_n(&g_drum_arm, __ATOMIC_RELAXED) && armed) ? 0x18 : 0x19;
+        if (want == 0x19 && !shown[g])
+            continue; /* not latched: the stems page's tile, not ours */
         uintptr_t comp_v;
         if ((stem & 7) || !own_q((uintptr_t) stem + 0xf0, &comp_v)) /* the live tile's child */
             continue;
@@ -876,6 +892,9 @@ static void drum8_index_apply(void) {
             }
             continue;
         }
+        shown[g] = want == 0x18;
+        if (!shown[g]) /* released: Stem FX shows this deck's tiles again */
+            __atomic_fetch_or(&g_tiles_poke_req, 1u << gdeck, __ATOMIC_RELEASE);
         if ((int) (uint32_t) v2[2] == want)
             continue;
         *(volatile int *) (comp + 0xc8) = want; /* comp proven an ImagesComponent just above */
@@ -955,13 +974,15 @@ static void drum_tile_repaint_if_needed(void) {
  *     tile 1-4 selected   -> 10, 12, 8, 16
  *     tile 8 armed        -> 14  (DRUM ROLL, green)
  *     tile 8 default      -> 15  (2*7+1, red DRUM ROLL: disarmed needs no write)
- *     tiles 5-7 armed     -> 17, the blank
+ *     tiles 5-6 armed     -> 17, the blank
+ *     tile 7 armed        -> 18 (HOLD) / 19 (HOLD on), appended by hold_tile_ready
  * With the Drum Roll mod off, entries 14/15 are swapped back to the native
  * 3/4 art (slip34_apply). */
 static const int DRUM_IDX_PLAIN[4] = {0, 2, 4, 6};
 static const int DRUM_IDX_LIT[4] = {10, 12, 8, 16};
 #define DRUM_IDX_TILE8 14
 #define DRUM_IDX_BLANK 17 /* the one spare entry in the tile art */
+#define DRUM_IDX_HOLD 18  /* tile 7's appended HOLD art; HOLD on is the next entry */
 
 /* ---- Tile 8 with Drum Roll off: EP147's own 3/4 ----
  * With the mod off, pad 8 is the native 3/4 slip loop, so its tile must not
@@ -1047,6 +1068,53 @@ static void slip34_apply(long comp, long tw, int native) {
     ((void (*)(long)) PAD_REPAINT)(tw);
 }
 
+/* ---- Tile 7 while armed: HOLD ----
+ * EP147 has no HOLD pad art, so tile 7's array is grown 18 -> 20 with the two
+ * holdtile.h images at 18 (HOLD) and 19 (HOLD on). Keyed on the live count, so
+ * a rebuilt array is re-grown. Returns 1 only when entries 18/19 are ours; any
+ * other array is left alone and the caller shows the blank instead.
+ * model = [tile 7's child + 0xf0], the child proven by the caller; UI thread. */
+#include "holdtile.h"
+static struct fx_img g_hold_art[2];
+static int g_hold_art_ok;
+static int hold_tile_ready(long model) {
+    if (!g_hold_art_ok) {
+        fx_fns_resolve();
+        if (!fx_img_val(&g_hold_art[0]))
+            g_hold_art[0] = fx_img_from_mem(HOLD_TILE_OFF, (int) sizeof HOLD_TILE_OFF);
+        if (!fx_img_val(&g_hold_art[1]))
+            g_hold_art[1] = fx_img_from_mem(HOLD_TILE_ON, (int) sizeof HOLD_TILE_ON);
+        if (!fx_img_val(&g_hold_art[0]) || !fx_img_val(&g_hold_art[1]))
+            return 0; /* decoder not ready: retry next paint */
+        g_hold_art_ok = 1;
+    }
+    if (model <= 0x10000 || (model & 7) || *(long *) model != (long) IMAGESCOMP_VT)
+        return 0;
+    uintptr_t *arrp = (uintptr_t *) (model + 0xd0);
+    uint32_t *cntp = (uint32_t *) (model + 0xe0);
+    uintptr_t arr = *arrp;
+    if (arr <= 0x10000 || (arr & 7))
+        return 0;
+    if (*cntp == SLIP_ART_CNT) {
+        void *grown = malloc((SLIP_ART_CNT + 2) * 8);
+        if (!grown)
+            return 0;
+        memcpy(grown, (void *) arr, SLIP_ART_CNT * 8);
+        memset((char *) grown + SLIP_ART_CNT * 8, 0, 2 * 8);
+        fx_img_assign((char *) grown + DRUM_IDX_HOLD * 8, &g_hold_art[0]);
+        fx_img_assign((char *) grown + (DRUM_IDX_HOLD + 1) * 8, &g_hold_art[1]);
+        *(volatile uintptr_t *) arrp = (uintptr_t) grown;
+        *(volatile uint32_t *) cntp = SLIP_ART_CNT + 2;
+        /* old block leaked on purpose: a paint may still read it this frame */
+        arr = (uintptr_t) grown;
+    }
+    if (*cntp != SLIP_ART_CNT + 2)
+        return 0;
+    const uintptr_t *a = (const uintptr_t *) arr;
+    return a[DRUM_IDX_HOLD] == fx_img_val(&g_hold_art[0]) &&
+           a[DRUM_IDX_HOLD + 1] == fx_img_val(&g_hold_art[1]);
+}
+
 static void drum_tiles_enforce(void) {
     /* Default on; azmod-drumsel.off opts out. Re-read every 256 calls to keep
      * access() off the per-paint path. */
@@ -1067,6 +1135,7 @@ static void drum_tiles_enforce(void) {
         long tw;
         int want;
         int disarmed;
+        int hold;
         int slot;
         int art34;
     } job[AZMOD_STEM_DECKS * 8];
@@ -1082,7 +1151,7 @@ static void drum_tiles_enforce(void) {
         int armed = __atomic_load_n(&g_drum_held[gdeck], __ATOMIC_RELAXED);
         int sel = (int) (g_drum_sel_led[gdeck] & 3u);
         for (int slot = 0; slot < 8; slot++) {
-            int want = -1, disarmed = 0, art34 = -1;
+            int want = -1, disarmed = 0, art34 = -1, hold = 0;
             if (!armed && slot < 7) {
                 /* Disarmed: native, except EP147 draws 2*slot while a pad is
                  * held, and the even entries hold our art. Point the pressed
@@ -1099,7 +1168,13 @@ static void drum_tiles_enforce(void) {
                 art34 = !drum_on;
                 if (armed && drum_on)
                     want = DRUM_IDX_TILE8; /* 14 = green */
-            } else {                       /* slots 4..6 */
+            } else if (slot == 6) {
+                if (!armed)
+                    continue; /* disarmed: leave native */
+                hold = 1;     /* armed: HOLD, lit while this deck's HOLD is on */
+                want = DRUM_IDX_HOLD +
+                       !!(__atomic_load_n(&g_drum_hold[gdeck], __ATOMIC_RELAXED) & DRUM_HOLD_ON);
+            } else {                       /* slots 4..5 */
                 if (!armed)
                     continue;          /* disarmed: leave native */
                 want = DRUM_IDX_BLANK; /* armed: blank them */
@@ -1110,6 +1185,7 @@ static void drum_tiles_enforce(void) {
             job[nj].tw = tw;
             job[nj].want = want;
             job[nj].disarmed = disarmed;
+            job[nj].hold = hold;
             job[nj].slot = slot;
             job[nj].art34 = art34;
             nj++;
@@ -1159,9 +1235,12 @@ static void drum_tiles_enforce(void) {
         }
         if (job[j].want < 0)
             continue; /* tile 8 art only, no index */
-        if (*idx == job[j].want)
+        int want = job[j].want;
+        if (job[j].hold && !hold_tile_ready((long) model))
+            want = DRUM_IDX_BLANK; /* no HOLD art in this array: the blank, as tiles 5-6 */
+        if (*idx == want)
             continue;
-        *idx = job[j].want;
+        *idx = want;
         ((void (*)(long)) PAD_REPAINT)(job[j].tw);
     }
 }

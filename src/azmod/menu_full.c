@@ -1151,7 +1151,7 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
                 else
                     draw_rect_outline(fb, qx, qy, qw, qh, 2,
                                       hi ? C_HI_TEXT : (active ? C_CHECK_BOX : C_STEM_OFF_FG));
-                c_text(fb, qx, qy, qw, qh, c_choice_label(it, b), qh * 40 / 100, lit ? on_fg : ink);
+                c_btn_text(fb, qx, qy, qw, qh, c_choice_label(it, b), lit ? on_fg : ink);
             }
             continue;
         }
@@ -1166,7 +1166,7 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
                 else
                     draw_rect_outline(fb, qx, qy, qw, qh, 2,
                                       hi ? C_HI_TEXT : (active ? C_CHECK_BOX : C_STEM_OFF_FG));
-                c_text(fb, qx, qy, qw, qh, az_choice_label(it, b), qh * 3 / 5, lit ? on_fg : ink);
+                c_btn_text(fb, qx, qy, qw, qh, az_choice_label(it, b), lit ? on_fg : ink);
             }
         } else if (c_has_box(it)) {
             int sz = fb->h * 20 / 800; /* one size for every checkbox */

@@ -267,6 +267,7 @@ static __thread int g_tls_deck =
 
 static _Atomic long g_pbread_tls_set = 0,
                     g_pbread_tls_unset = 0; /* diag: pbread injection routing source */
+#include "stem_fx.c" /* Stem FX: state and press control; rendered by key_shift.c's read hook */
 #include "key_shift.c"
 
 /* ---- AArch64 inline-hook installer (fail-safe) ----------------------- *
@@ -784,6 +785,7 @@ static void *flusher(void *arg) {
         drum_service(); /* drum-roll bank discovery / load */
         PH(4);
         drum_grid_service();       /* drum-roll beat grid: parse per track change (off RT) */
+        sfx_service();             /* Stem FX: retire faded-out effects */
         PH(5);
         atomic_store_explicit(&g_fgprtag_on, !dev_flag(NOFGPRTAG_PATH),
                               memory_order_relaxed);

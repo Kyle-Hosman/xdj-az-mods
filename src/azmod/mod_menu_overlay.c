@@ -648,6 +648,7 @@ struct ov_window {
 /* Everything the overlay thread keeps from one tick to the next. One instance lives on the
  * overlay thread's stack for the life of the process; nothing else touches it. */
 #include "touch_seq.h"
+#include "ht_tap.h"
 struct overlay_ctx {
     Display *dpy;
     int scr;
@@ -667,6 +668,10 @@ struct overlay_ctx {
     struct ov_window srcicon;  /* the AZ icon in the native MOD MENU source row */
     struct ov_window readouts; /* the OVERLAYS readouts (FPS and the rest) */
     struct ov_window clockn;   /* the Clock, in the place of EP147's recording time readout */
+    struct ov_window clocktap; /* the Clock's tap target (input only): opens its Timer popup */
+    struct ov_window ctpop;    /* the Clock's Timer popup */
+    struct ht_gest ct_gest;    /* taps on those two (a whole tap, never a press or a drag) */
+    int ct_key;                /* what the Clock's place last showed (azmod_clockn_key) */
     struct ov_window lane[AZMOD_STEM_DECKS]; /* one stem-lane band per deck */
 
     int need_raise;     /* something covered us: raise our windows once this tick */
@@ -875,6 +880,23 @@ static void ov_create_windows(struct overlay_ctx *c) {
     /* The Clock when it sits top left. */
     ov_window_init(&c->clockn);
     c->clockn.id = ov_create_window(c, &a, -16, -16, 1, 1, 1);
+    /* The Clock's tap target: an input-only window over the Clock, a little taller than its
+     * 20 px text for a finger. It takes the taps there, so EP147's readout under it (which
+     * opens MIXER SETTINGS) does not get them. And the Clock's Timer popup. Both take press
+     * and release: the Timer acts on a whole tap. */
+    {
+        XSetWindowAttributes ia;
+        memset(&ia, 0, sizeof ia);
+        ia.override_redirect = True;
+        ia.event_mask = ButtonPressMask | ButtonReleaseMask;
+        ov_window_init(&c->clocktap);
+        c->clocktap.id = XCreateWindow(c->dpy, c->root, -16, -16, 1, 1, 0, 0, InputOnly, CopyFromParent,
+                                       CWOverrideRedirect | CWEventMask, &ia);
+    }
+    ov_window_init(&c->ctpop);
+    c->ctpop.id = ov_create_window(c, &a, -16, -16, 1, 1, 0);
+    XSelectInput(c->dpy, c->ctpop.id, ButtonPressMask | ButtonReleaseMask | ExposureMask | VisibilityChangeMask);
+    c->ct_key = -1;
     /* Stem lanes: one window per deck's waveform band, input-transparent so the waveform
      * underneath still takes needle-drop touches. There must be one per AZMOD_STEM_DECKS: the
      * paint loop uses lane[d] for every deck, and an uncreated entry is a BadWindow, which
@@ -1049,6 +1071,28 @@ static void ov_on_release(struct overlay_ctx *c, XEvent *ev) {
     }
 }
 
+/* A button event on the Clock's tap target or its Timer popup (returns 1: taken). Only a whole
+ * tap acts (ht_tap.h), at the press point: on the Clock it opens or closes the popup, on the
+ * popup it presses the button there. */
+static int ov_clock_timer_event(struct overlay_ctx *c, XEvent *ev) {
+    if (ev->type != ButtonPress && ev->type != ButtonRelease)
+        return 0;
+    Window w = ev->xbutton.window;
+    if (w == None || (w != c->clocktap.id && w != c->ctpop.id))
+        return 0;
+    int tx, ty;
+    if (!ht_gest_feed(&c->ct_gest, ev->type == ButtonPress, ev->xbutton.button, ev->xbutton.x_root,
+                      ev->xbutton.y_root, now_ms(), &tx, &ty))
+        return 1;
+    if (c->clocktap.mapped && tx >= c->clocktap.x && tx < c->clocktap.x + c->clocktap.w &&
+        ty >= c->clocktap.y && ty < c->clocktap.y + c->clocktap.h)
+        azmod_clockn_tap(&g_state, &g_fb);
+    else
+        azmod_ctpop_tap(&g_fb, tx, ty);
+    c->dirty = 1;
+    return 1;
+}
+
 /* Taps, drags and visibility changes on our windows, drained first so a tap this tick shows
  * in this tick's draw. */
 static void ov_drain_x_events(struct overlay_ctx *c) {
@@ -1061,6 +1105,8 @@ static void ov_drain_x_events(struct overlay_ctx *c) {
         int touch = ev.type == ButtonPress || ev.type == ButtonRelease
                         ? touch_seq_feed(&c->touch, ev.type == ButtonPress, ev.xbutton.button, now_ms())
                         : TOUCH_OTHER;
+        if (ov_clock_timer_event(c, &ev))
+            continue; /* the Clock or its Timer popup */
         if (sdk_overlay_x_event(c, &ev, touch))
             continue; /* a community mod's surface */
         if (ev.type == ButtonPress && touch == TOUCH_MOVE) {
@@ -1320,6 +1366,48 @@ static void ov_resolve_drum_exports(void) {
     *(void **) &g_deck_has_track_fn = dlsym(RTLD_DEFAULT, "azstem_deck_has_track");
     *(void **) &g_stem_gain_fn = dlsym(
         RTLD_DEFAULT, "azstem_stem_gain"); /* absent in older azstem: waveforms at unity */
+    *(void **) &g_sfx_config_fn = dlsym(RTLD_DEFAULT, "azstem_stem_fx_config");
+    __atomic_store_n((void **) &g_sfx_on_fn, dlsym(RTLD_DEFAULT, "azstem_stem_fx_on"),
+                     __ATOMIC_RELEASE); /* read by the bus */
+    __atomic_store_n((void **) &g_sfx_fn, dlsym(RTLD_DEFAULT, "azstem_stem_fx"),
+                     __ATOMIC_RELEASE); /* read by the bus; absent in older azstem: solo pads */
+}
+
+/* Stem FX (Stem FX = FX): the mode to the bus, mode and lengths to azstem when they
+ * change, and each deck's on bits for the LEDs. Overlay thread. */
+static void ov_sync_stem_fx(void) {
+    static int last = -1;
+    static const int ECHO_Q[4] = {1, 2, 3, 4};  /* quarter beats */
+    static const int BRAKE_Q[4] = {2, 4, 8, 16};
+    int mode = az_on(AZF_STEMS) && az_get(AZF_STEM_FX) == 1 && g_sfx_fn && g_sfx_on_fn &&
+               g_sfx_config_fn;
+    int e = az_get(AZF_STEM_FX_ECHO), b = az_get(AZF_STEM_FX_BRAKE);
+    int key = mode | (e & 3) << 1 | (b & 3) << 3;
+    if (key != last) {
+        last = key;
+        if (g_sfx_config_fn)
+            g_sfx_config_fn(mode, ECHO_Q[e & 3], BRAKE_Q[b & 3]);
+        __atomic_store_n(&g_stemfx_pads, mode, __ATOMIC_RELEASE);
+    }
+    g_sfx_led_mode = mode;
+#ifdef AZMOD_PROBES
+    if (AZ_PROBE_ON("/home/root/settings/azmod-stemfx.log")) {
+        unsigned w = __atomic_load_n(&g_sfxlog_w, __ATOMIC_ACQUIRE);
+        if (w - g_sfxlog_r > 256u)
+            g_sfxlog_r = w - 256u;
+        FILE *f = g_sfxlog_r != w ? azlog_open("/tmp/azmod-stemfx.log", "a") : NULL;
+        for (; f && g_sfxlog_r != w; g_sfxlog_r++) {
+            unsigned e = __atomic_load_n(&g_sfxlog[g_sfxlog_r & 255u], __ATOMIC_RELAXED);
+            fprintf(f, "%ld %c d%d %d v=%02x\n", now_ms(), (char) (e >> 24), (int) (e >> 16 & 0xff),
+                    (int) (e >> 8 & 0xff), e & 0xffu);
+        }
+        if (f)
+            fclose(f);
+    } else
+        g_sfxlog_r = __atomic_load_n(&g_sfxlog_w, __ATOMIC_ACQUIRE);
+#endif
+    for (int d = 0; d < AZMOD_STEM_DECKS; d++)
+        __atomic_store_n(&g_sfx_led_on[d], mode ? g_sfx_on_fn(d) & 0xFu : 0u, __ATOMIC_RELAXED);
 }
 
 static void ov_sync_stem_volume(void) {
@@ -1416,6 +1504,7 @@ static void ov_sync_drum_roll(void) {
     static int last_drum = -1, last_bank = -1;
     ov_resolve_drum_exports();
     ov_sync_stem_volume();
+    ov_sync_stem_fx();
     int on = az_on(AZF_DRUM_ROLL) ? 1 : 0;
     if (on != last_drum) {
         last_drum = on;
@@ -1934,6 +2023,15 @@ static void ov_rates_display(FILE *rf, const struct ov_rate_window *d) {
         fprintf(rf, "ui60: waveform limiter passed %ld/s\n", p - pp);
         pp = p;
     }
+    {
+        static long pf, pq;
+        long f = __atomic_load_n(&g_feed_frame_n, __ATOMIC_RELAXED),
+             q = __atomic_load_n(&g_feed_pass_n, __ATOMIC_RELAXED);
+        fprintf(rf, "ui60: feed lock %s, frame runs %ld/s, own-timer pass %ld/s\n",
+                feedlock_on() ? "on" : "off", f - pf, q - pq);
+        pf = f;
+        pq = q;
+    }
     fprintf(rf,
             "ui60: clock=%d wave=%d scroll60=%d ui-start-parts=%d  (mod4=%d "
             "mod19=%d)\n",
@@ -2301,7 +2399,8 @@ static void ov_poll_clock(struct overlay_ctx *c) {
     char t[sizeof g_state.clock_text] = "";
     int32_t off;
     if (cs_valid(sync, mark, (int64_t) ts.tv_sec) && zone_ok && ctz_offset(&z, (int64_t) ts.tv_sec, &off) == 0) {
-        ctz_format(t, sizeof t, (int64_t) ts.tv_sec, off, az_get(AZF_CLOCK_24H) == 1);
+        ctz_format(t, sizeof t, (int64_t) ts.tv_sec, off, az_get(AZF_CLOCK_24H) == 1,
+                   az_get(AZF_CLOCK_SECONDS) == 1);
         if (k == 0)
             strncat(t, " UTC", sizeof t - strlen(t) - 1);
     }
@@ -2517,8 +2616,12 @@ static void ov_strip_visibility(int *side1, int *side2) {
                  g_state.stems_available[sd1] && !g_four_deck;
     int d2base = wave_closed && !gridadj && g_state.pad_beatloop[sd2] &&
                  g_state.stems_available[sd2] && !g_four_deck;
-    *side1 = d1base ? (azmod_stem_native ? 2 : 1) : 0;
-    *side2 = d2base ? (azmod_stem_native ? 2 : 1) : 0;
+    /* Stem FX = FX: row 2 is EP147's own FX tiles, so the lanes window is not mapped
+     * (azmod_native_lanes_drawn draws no lanes then either; a mapped window would paint its
+     * ground over the tiles). */
+    int lanes = az_get(AZF_STEM_FX) != 1;
+    *side1 = d1base ? (azmod_stem_native ? (lanes ? 2 : 0) : 1) : 0;
+    *side2 = d2base ? (azmod_stem_native ? (lanes ? 2 : 0) : 1) : 0;
 }
 
 /* The menu window: always mapped; wanted_rect() parks it off screen when unused. It also
@@ -2620,6 +2723,23 @@ static void ov_place_readouts(struct overlay_ctx *c) {
         azmod_clockn_rect(&g_fb, &x, &y, &w, &h);
     ov_window_place(c, &c->clockn, x, y, w, h);
     ov_window_show(c, &c->clockn);
+    /* the Clock's tap target: its rect, 14 px taller above and below (the status bar) */
+    c->clocktap.wanted = c->clockn.wanted;
+    if (c->clocktap.wanted) {
+        int ty = y - 14 < 0 ? 0 : y - 14;
+        ov_window_place(c, &c->clocktap, x, ty, w, y + h + 14 - ty);
+    } else
+        ov_window_place(c, &c->clocktap, -16, -16, 1, 1);
+    ov_window_show(c, &c->clocktap);
+    x = y = -16, w = h = 1;
+    c->ctpop.wanted = azmod_ctpop_rect(&g_state, &g_fb, &x, &y, &w, &h);
+    ov_window_place(c, &c->ctpop, x, y, w, h);
+    ov_window_show(c, &c->ctpop);
+    int key = azmod_clockn_key(); /* the countdown's seconds and its red flash */
+    if (key != c->ct_key) {
+        c->ct_key = key;
+        c->dirty = 1;
+    }
 }
 
 /* One deck's stem-lane window: only while the deck screen is up, STEMS is on and that deck
@@ -2756,6 +2876,11 @@ static void ov_present(struct overlay_ctx *c) {
         azmod_draw_clockn(&g_state, &g_fb);
         ov_put(c, c->clockn.id, c->clockn.x, c->clockn.y, c->clockn.w, c->clockn.h);
     }
+    if (c->ctpop.wanted && c->ctpop.mapped) {
+        ov_shm_wait(c);
+        azmod_draw_ctpop(&g_fb);
+        ov_put(c, c->ctpop.id, c->ctpop.x, c->ctpop.y, c->ctpop.w, c->ctpop.h);
+    }
 }
 
 /* Startup work that needs EP147 running: the hook table, Hide Track Title's runtime part,
@@ -2884,6 +3009,7 @@ static void *overlay_thread(void *arg) {
         bus_cfg_publish(); /* this tick's Mod Menu settings -> the bus threads */
         vs_save_flush(); /* before any continue: a Vinyl Speed Adjust value posted by
                           * the touch handler on EP147's message thread */
+        wz_tick(tick_start); /* Remember Waveform Zoom: saves a new zoom once it settles */
         if (ov_reload_banner(c))
             continue;
         ov_poll_inputs(c);

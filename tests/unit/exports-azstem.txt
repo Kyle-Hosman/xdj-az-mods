@@ -28,6 +28,9 @@ azstem_has_stems
 azstem_play_obs
 azstem_present
 azstem_stem_eq
+azstem_stem_fx
+azstem_stem_fx_config
+azstem_stem_fx_on
 azstem_stem_gain
 azstem_trackgen
 azstem_wave

@@ -310,6 +310,14 @@ void azmod_stats_rect(const azmod_state *s, const azmod_fb *fb, int *x, int *y, 
 __attribute__((visibility("hidden"))) bool azmod_clockn_on(const azmod_state *s);
 __attribute__((visibility("hidden"))) void azmod_clockn_rect(const azmod_fb *fb, int *x, int *y, int *w, int *h);
 __attribute__((visibility("hidden"))) void azmod_draw_clockn(const azmod_state *s, const azmod_fb *fb);
+/* The Clock's countdown Timer (clock_timer.h), overlay thread only: a tap on the Clock opens or
+ * closes its popup; the popup's rect (0 = not shown), a tap on it, its drawing; a key that changes
+ * whenever the Clock's place must be drawn again (the countdown's seconds and its red). */
+__attribute__((visibility("hidden"))) void azmod_clockn_tap(const azmod_state *s, const azmod_fb *fb);
+__attribute__((visibility("hidden"))) int azmod_ctpop_rect(const azmod_state *s, const azmod_fb *fb, int *x, int *y, int *w, int *h);
+__attribute__((visibility("hidden"))) void azmod_ctpop_tap(const azmod_fb *fb, int x, int y);
+__attribute__((visibility("hidden"))) void azmod_draw_ctpop(const azmod_fb *fb);
+__attribute__((visibility("hidden"))) int azmod_clockn_key(void);
 
 /* A screen's row rect, i in [0..N]. */
 void azmod_item_rect(const azmod_fb *fb, int i, int *x, int *y, int *w, int *h);

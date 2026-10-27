@@ -950,7 +950,11 @@ static Pos32 pbread_hook(void *self, Float2 *dst, const Pos32 *pos, long long cn
             long off = atomic_load_explicit(&dk->stem_off, memory_order_relaxed);
             float sg[NSTEM];
             stem_gains(mydeck, sg);
-            int orig = !tone && stems_play_original(dk, em, sg);
+            /* Stem FX shaping this page (stem_fx.c); any effect needs the stem sum. */
+            sfx_page fxp;
+            fxp.mask = 0;
+            unsigned fxm = tone ? 0u : sfx_page_prepare(mydeck, start - off, start - off + n2, &fxp);
+            int orig = !tone && !fxm && stems_play_original(dk, em, sg);
             int xf = 0; /* frames to blend at a sum <-> original seam */
             unsigned em_old = g_em_prev[mydeck];
             int xf_mask = 0; /* a plain stem toggle: blend old mask -> new mask */
@@ -974,9 +978,10 @@ static Pos32 pbread_hook(void *self, Float2 *dst, const Pos32 *pos, long long cn
                 } else if ((sc & 0x80u) && nf > 0 && idx >= 0 && idx < nf) {
                     for (int k = 0; k < NSTEM; k++)
                         if ((em & (1u << k)) && dk->stem[k]) {
-                            const float *g = dk->stem[k];
-                            L += sg[k] * g[idx * 2];
-                            R += sg[k] * g[idx * 2 + 1]; /* raw stem sum; EP147 key-shifts it */
+                            float sL, sR;
+                            sfx_stem_px(dk, &fxp, k, nf, idx, &sL, &sR);
+                            L += sg[k] * sL;
+                            R += sg[k] * sR; /* raw stem sum; EP147 key-shifts it */
                         }
                 }
                 if (xf && xf_mask) {
@@ -984,9 +989,10 @@ static Pos32 pbread_hook(void *self, Float2 *dst, const Pos32 *pos, long long cn
                         float oL = 0.f, oR = 0.f; /* the old mask's sum at the same sample */
                         for (int k = 0; k < NSTEM; k++)
                             if ((em_old & (1u << k)) && dk->stem[k]) {
-                                const float *g = dk->stem[k];
-                                oL += sg[k] * g[idx * 2];
-                                oR += sg[k] * g[idx * 2 + 1];
+                                float sL, sR;
+                                sfx_stem_px(dk, &fxp, k, nf, idx, &sL, &sR);
+                                oL += sg[k] * sL;
+                                oR += sg[k] * sR;
                             }
                         float w = (float) (i + 1) / (float) (xf + 1);
                         L = oL + w * (L - oL);

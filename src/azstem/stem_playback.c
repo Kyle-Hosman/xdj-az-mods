@@ -91,7 +91,7 @@ static pthread_mutex_t g_adv_lock = PTHREAD_MUTEX_INITIALIZER;
  * matched case-insensitively by substring ("instruments" -> slot 1, other/INST).
  * Each .ogg is decoded to interleaved stereo f32 @44100 and mlock'd. */
 
-static char g_stems_base[512]; /* discovered .../MixRack-stems dir, "" if none (shared) */
+static char g_stems_base[512]; /* discovered <stick>/STEMS dir, "" if none (shared) */
 
 /* Per-deck gui::LoadState, captured by lsctor_hook (the ctor receives the deck).
  * Declared above the drumroll.c include because the beat grid hangs off the same
@@ -155,14 +155,11 @@ static int is_dir(const char *p) {
     struct stat st;
     return (stat(p, &st) == 0 && S_ISDIR(st.st_mode));
 }
-/* Stems base under <root>, in priority order:
- *   <root>/STEMS                           what AZ-MODS writes
- *   <root>/_MixRack_library/MixRack-stems  legacy
- * STEMS/ wins only when it is not empty: AZ-MODS creates it on every stick it sets up,
- * so an empty STEMS/ is normal on a stick whose stems are still in the legacy
- * folder. Matched case-insensitively because FAT tooling may uppercase.
- * This picks the base for the availability scan only; a track load searches both
- * layouts on every stick and ranks candidates (find_track_folder_any_c). */
+/* Stems base under <root>: <root>/STEMS (what AZ-MODS writes), only when it is not empty:
+ * AZ-MODS creates it on every stick it sets up, so an empty STEMS/ is normal on a stick
+ * without stems. Matched case-insensitively because FAT tooling may uppercase.
+ * This picks the base for the availability scan only; a track load searches every
+ * stick and ranks candidates (find_track_folder_any_c). */
 static int dir_has_entries(const char *p) {
     DIR *d = opendir(p);
     if (!d)
@@ -200,14 +197,7 @@ static int child_named(const char *parent, const char *name, char *out, size_t o
 }
 static int root_has_stems(const char *root, char *out, size_t outsz) {
     char p[1024];
-    /* 1. <root>/STEMS, only when it holds something. */
     if (child_named(root, "STEMS", p, sizeof p) && dir_has_entries(p)) {
-        snprintf(out, outsz, "%s", p);
-        return 1;
-    }
-    /* 2. legacy MixRack layout. */
-    snprintf(p, sizeof p, "%s/_MixRack_library/MixRack-stems", root);
-    if (is_dir(p)) {
         snprintf(out, outsz, "%s", p);
         return 1;
     }
@@ -567,8 +557,8 @@ static void *dth_prog(void *arg) {
  *   0  <key>
  *   1  <key>_           a name the stick cannot store as written (trailing
  *                       dot/space, CON/NUL/...)
- *   2  <key>-xxxxxxxx   8-hex id: legacy MixRack, or AZ-MODS for a different song
- *                       with the same file name (told apart by source.json)
+ *   2  <key>-xxxxxxxx   8-hex id: AZ-MODS, for a different song with the same file
+ *                       name (told apart by source.json)
  * Case-insensitive, like FAT/exFAT. */
 static int stem_folder_rank(const char *name, const char *key) {
     size_t kl = strlen(key);
@@ -871,13 +861,12 @@ static int find_track_folder_any(const char *track, const char *src, char *folde
                                  int *ident) {
     return find_track_folder_any_c(track, src, folder, sz, ident, 0);
 }
-/* Find the stems folder for `track` across every mounted stick and both layouts.
+/* Find the stems folder for `track` in every mounted stick's STEMS/.
  * A folder made from a different file is never taken (stem_folder_identity).
  * Best candidate wins by, in order:
  *   1. made from this file (source.json) before unknown;
  *   2. on the same stick as the track's file `src`, when known;
- *   3. match rank (stem_folder_rank);
- *   4. STEMS/ before legacy MixRack.
+ *   3. match rank (stem_folder_rank).
  * Read-only. Off-RT. Returns 1 and fills `folder`. */
 static int find_track_folder_any_c(const char *track, const char *src, char *folder, size_t sz,
                                    int *ident, int cached) {
@@ -904,64 +893,59 @@ static int find_track_folder_any_c(const char *track, const char *src, char *fol
             snprintf(stick, sizeof stick, "%s/%s", sroots[r], rde->d_name);
             size_t sl = strlen(stick);
             int other = !(src && !strncmp(src, stick, sl) && src[sl] == '/');
-            for (int layout = 0; layout < 2; layout++) {
-                char base[1024];
-                if (layout == 0) {
-                    if (!child_named(stick, "STEMS", base, sizeof base))
-                        continue;
-                } else
-                    snprintf(base, sizeof base, "%s/_MixRack_library/MixRack-stems", stick);
-                DIR *d = 0;
-                struct dirent *de;
-                char **nl = 0;
-                int nn = 0, ni = 0;
-                if (cached) {
-                    pthread_mutex_lock(&g_nl_mu);
-                    nl = nl_get(base, &nn);
-                    if (!nl) {
-                        pthread_mutex_unlock(&g_nl_mu);
-                        continue;
-                    }
-                } else if (!(d = opendir(base)))
-                    continue;
-                for (;;) {
-                    const char *dn;
-                    if (cached) {
-                        if (ni >= nn)
-                            break;
-                        dn = nl[ni++];
-                    } else {
-                        if (!(de = readdir(d)))
-                            break;
-                        dn = de->d_name;
-                    }
-                    if (dn[0] == '.')
-                        continue;
-                    int rank = stem_folder_rank(dn, track);
-                    if (rank < 0)
-                        continue;
-                    char p[1600];
-                    snprintf(p, sizeof p, "%s/%s", base, dn);
-                    if (!is_dir(p))
-                        continue;
-                    int id = stem_folder_identity(p, &sid);
-                    if (id < 0) {
-                        logln("ogg: reject folder '%s' for '%s': made from a different file", p,
-                              track);
-                        continue;
-                    }
-                    int score = (id ? 0 : 1000) + other * 100 + rank * 10 + layout;
-                    if (score >= best)
-                        continue;
-                    best = score;
-                    *ident = id;
-                    snprintf(folder, sz, "%s", p);
-                }
-                if (cached)
+            char base[1024];
+            if (!child_named(stick, "STEMS", base, sizeof base))
+                continue;
+            DIR *d = 0;
+            struct dirent *de;
+            char **nl = 0;
+            int nn = 0, ni = 0;
+            if (cached) {
+                pthread_mutex_lock(&g_nl_mu);
+                nl = nl_get(base, &nn);
+                if (!nl) {
                     pthread_mutex_unlock(&g_nl_mu);
-                else
-                    closedir(d);
+                    continue;
+                }
+            } else if (!(d = opendir(base)))
+                continue;
+            for (;;) {
+                const char *dn;
+                if (cached) {
+                    if (ni >= nn)
+                        break;
+                    dn = nl[ni++];
+                } else {
+                    if (!(de = readdir(d)))
+                        break;
+                    dn = de->d_name;
+                }
+                if (dn[0] == '.')
+                    continue;
+                int rank = stem_folder_rank(dn, track);
+                if (rank < 0)
+                    continue;
+                char p[1600];
+                snprintf(p, sizeof p, "%s/%s", base, dn);
+                if (!is_dir(p))
+                    continue;
+                int id = stem_folder_identity(p, &sid);
+                if (id < 0) {
+                    logln("ogg: reject folder '%s' for '%s': made from a different file", p,
+                          track);
+                    continue;
+                }
+                int score = (id ? 0 : 1000) + other * 100 + rank * 10;
+                if (score >= best)
+                    continue;
+                best = score;
+                *ident = id;
+                snprintf(folder, sz, "%s", p);
             }
+            if (cached)
+                pthread_mutex_unlock(&g_nl_mu);
+            else
+                closedir(d);
         }
         closedir(rd);
     }
@@ -1450,6 +1434,8 @@ static char g_pending_name[NDECK][512];
  * playing under B. */
 static char g_loaded_src[NDECK][600];
 static char g_pending_src[NDECK][600];
+/* A track identified while no stems base was known: load its stems once one is found. */
+static int g_load_deferred[NDECK];
 #define EJECT_EMPTY_TICKS 8
 /* The deck's track identity changed: a confirmed new track or an eject. Every per-deck
  * consumer keyed on the generation (azmod's stem toggle reset, the drum roll's grid, the
@@ -1530,14 +1516,15 @@ static void stems_tick(void) {
             logln("STICK d%d base='%s' self=%p frames=%ld gl='%s'", deck, g_stems_base, sf,
                   dk->stem_frames, dk->loaded_track);
         }
+        /* No stems base: track identity still runs below, since the drum roll's grid,
+         * the auto key-shift mapping and azmod's toggle reset key on the generation
+         * whether or not the stick has stems. Only stem loading waits for a base. */
+        int have_base = g_stems_base[0] != 0;
         /* no USB tree: emulator f32 fallback (Deck 1 only) */
-        if (!g_stems_base[0]) {
-            if (deck == 0 && dk->stem_frames == 0) {
-                load_stems_f32(0);
-                if (dk->stem_frames > 0)
-                    logln("stems(f32 fallback) loaded: frames=%ld", dk->stem_frames);
-            }
-            continue;
+        if (!have_base && deck == 0 && dk->stem_frames == 0) {
+            load_stems_f32(0);
+            if (dk->stem_frames > 0)
+                logln("stems(f32 fallback) loaded: frames=%ld", dk->stem_frames);
         }
         const char *tr = get_loaded_track_name(deck);
         if (!tr || !tr[0]) {
@@ -1548,8 +1535,10 @@ static void stems_tick(void) {
             if (dk->loaded_track[0] && ++g_eject_empty[deck] >= EJECT_EMPTY_TICKS) {
                 logln("stems_tick: d%d EJECT (name empty %d ticks) -- free + clear avail", deck,
                       g_eject_empty[deck]);
-                drop_stems(deck);
+                if (have_base)
+                    drop_stems(deck);
                 atomic_store_explicit(&g_stem_pending[deck], 0, memory_order_relaxed);
+                g_load_deferred[deck] = 0;
                 dk->loaded_track[0] = 0;
                 g_loaded_src[deck][0] = 0;
                 deck_track_changed(deck); /* generation + identity: ejected */
@@ -1577,6 +1566,12 @@ static void stems_tick(void) {
             if (!atomic_load_explicit(&g_stem_loading[deck], memory_order_acquire) &&
                 atomic_exchange_explicit(&g_load_again[deck], 0, memory_order_acq_rel))
                 start_load(deck, tr);
+            /* identified before a stems base existed: the base is here now */
+            else if (have_base && g_load_deferred[deck] &&
+                     !atomic_load_explicit(&g_stem_loading[deck], memory_order_acquire)) {
+                g_load_deferred[deck] = 0;
+                start_load(deck, tr);
+            }
             continue;
         }
 
@@ -1602,6 +1597,15 @@ static void stems_tick(void) {
         /* before the publish below: azmod must see the new name and the new generation
          * together, or it resets the deck's stem toggles twice */
         deck_track_changed(deck);
+        if (!have_base) {
+            /* identity only: publish it, and load the stems if a base turns up */
+            publish_deck_file(deck, "curtrack", tr);
+            publish_src(deck);
+            snprintf(dk->loaded_track, sizeof dk->loaded_track, "%s", tr);
+            g_load_deferred[deck] = 1;
+            continue;
+        }
+        g_load_deferred[deck] = 0;
 
         /* Drop the old stems now, or the RT hook keeps rendering them against the
          * new track's playhead until the new decode lands. Without buffers it

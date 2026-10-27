@@ -16,6 +16,7 @@
 #include "clock_tz.h"     /* the zone list's offsets (screen_overlays.c) */
 #include "clock_set.h"    /* Set Time Manually (screen_overlays.c) */
 #include "clock_native.h" /* the Clock's place in EP147's readout (screen_overlays.c) */
+#include "clock_timer.h"  /* the Clock's countdown Timer (screen_overlays.c) */
 #include "azfeatures.c" /* the row table: pure logic, in every build of menu.c */
 
 /* The Mod Menu is one translation unit: the parts below are #included in this order, each

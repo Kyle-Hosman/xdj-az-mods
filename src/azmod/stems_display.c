@@ -1126,6 +1126,58 @@ static void stems4_tick(void) {
     }
 }
 
+/* ---- Stem FX tiles with the effect on: cyan ----
+ * EP147's pressed art for the four FX tiles has the blue of the DRUMS stem tile. A tile's
+ * array is grown by the four sfxtile.h images (in pad order, slots 4-7), and an effect that is
+ * on shows its slot's image in place of EP147's pressed art. Grown = the array's last four
+ * entries are ours, so an array EP147 rebuilt is grown again. Returns the index of the image
+ * for fx (0-3), or -1: the caller keeps EP147's pressed art. comp is vtable-checked by the
+ * caller; UI thread. */
+#include "sfxtile.h"
+static struct fx_img g_sfx_art[4];
+static int g_sfx_art_ok;
+static int sfx_tile_index(long comp, int fx) {
+    static const unsigned char *const src[4] = {SFX_TILE_VOCAL_ECHO, SFX_TILE_INST_ECHO,
+                                                SFX_TILE_INST_BRAKER, SFX_TILE_DRUMS_ECHO};
+    static const int len[4] = {(int) sizeof SFX_TILE_VOCAL_ECHO, (int) sizeof SFX_TILE_INST_ECHO,
+                               (int) sizeof SFX_TILE_INST_BRAKER, (int) sizeof SFX_TILE_DRUMS_ECHO};
+    if (fx < 0 || fx > 3)
+        return -1;
+    if (!g_sfx_art_ok) {
+        fx_fns_resolve();
+        for (int i = 0; i < 4; i++)
+            if (!fx_img_val(&g_sfx_art[i]))
+                g_sfx_art[i] = fx_img_from_mem(src[i], len[i]);
+        for (int i = 0; i < 4; i++)
+            if (!fx_img_val(&g_sfx_art[i]))
+                return -1; /* decoder not ready: retry next refresh */
+        g_sfx_art_ok = 1;
+    }
+    uintptr_t *arrp = (uintptr_t *) (comp + 0xd0);
+    uint32_t *cntp = (uint32_t *) (comp + 0xe0);
+    uintptr_t arr = *arrp;
+    uint32_t cnt = *cntp;
+    if (arr <= 0x10000 || (arr & 7) || cnt < 4 || cnt > 256)
+        return -1;
+    int ours = 1;
+    for (int i = 0; i < 4 && ours; i++)
+        ours = ((const uintptr_t *) arr)[cnt - 4 + i] == fx_img_val(&g_sfx_art[i]);
+    if (!ours) {
+        void *grown = malloc((cnt + 4) * 8);
+        if (!grown)
+            return -1;
+        memcpy(grown, (void *) arr, cnt * 8);
+        memset((char *) grown + cnt * 8, 0, 4 * 8);
+        for (int i = 0; i < 4; i++)
+            fx_img_assign((char *) grown + (cnt + i) * 8, &g_sfx_art[i]);
+        *(volatile uintptr_t *) arrp = (uintptr_t) grown;
+        *(volatile uint32_t *) cntp = cnt + 4;
+        /* old block leaked on purpose: a paint may still read it this frame */
+        cnt += 4;
+    }
+    return (int) cnt - 4 + fx;
+}
+
 /* Opt-in (azmod-tilefix.log): names the exit stem_tile_fix_one took, to
  * /tmp/azmod-tilefix, change-only. */
 static void tilefix_log(const char *why, int slot, long ods, long tds, int owner, int on, long comp,
@@ -1170,13 +1222,32 @@ static void stem_tile_fix_one(long w) {
     }
     long ods = tds;
     long comp = *(long *) (w + 0xf0);
-    /* Tiles 5-8 (slots 4-7: VOCAL ECHO / INST ECHO / INST BRAKER / DRUMS ECHO)
-     * are left to EP147, which re-asserts their index on every refresh; writing
-     * it would only win a race and cost a repaint each time. Slots 0-3 keep an
-     * index once set. The mini stem waveforms are drawn over those tiles'
-     * interiors instead (draw_stem_lanes_native() in stem_overlay.c). */
+    /* Tiles 5-8 (slots 4-7: VOCAL ECHO / INST ECHO / INST BRAKER / DRUMS ECHO). With the
+     * mini stem waveforms on the bottom row they are left to EP147, which sets their index
+     * on every refresh; the lanes are drawn over their interiors (draw_stem_lanes_native()
+     * in stem_overlay.c). As Stem FX pads they show EP147's own art, and an effect that is
+     * on shows its cyan pressed art (sfx_tile_index; EP147's own, normal - 1, if that fails).
+     * The write follows EP147's own in the same refresh, as for slots 0-3. */
     if (slot >= AZMOD_STEM_COUNT && slot < 8) {
-        tilefix_log("EXIT:fxrow", slot, ods, tds, owner, -1, comp, -1, -1);
+        int cur = comp_is_valid(comp) ? *(int *) (comp + 0xc8) : -1;
+        if (az_get(AZF_STEM_FX) != 1 || cur < 1) {
+            tilefix_log("EXIT:fxrow", slot, ods, tds, owner, -1, comp, cur, -1);
+            return;
+        }
+        int fxon = (__atomic_load_n(&g_sfx_led_on[owner], __ATOMIC_RELAXED) >> (slot - AZMOD_STEM_COUNT)) & 1u;
+        int normal = cur | 1; /* pairs are {down, normal}: normal is the odd index */
+        int want = normal;
+        if (fxon) {
+            const int cyan = sfx_tile_index(comp, slot - AZMOD_STEM_COUNT);
+            want = cyan >= 0 ? cyan : normal - 1;
+        }
+        if (cur == want) {
+            tilefix_log("fxsame", slot, ods, tds, owner, fxon, comp, cur, want);
+            return;
+        }
+        tilefix_log("FXWRITE", slot, ods, tds, owner, fxon, comp, cur, want);
+        *(int *) (comp + 0xc8) = want;
+        ((void (*)(long)) PAD_REPAINT)(comp);
         return;
     }
     if (slot < 0 || slot >= AZMOD_STEM_COUNT) {
@@ -1220,7 +1291,9 @@ static int tilew_alive(long tw) {
 static void stem_tiles_poke(int deck) {
     if (deck < 0 || deck >= AZMOD_STEM_DECKS || !g_orig_stemref || !on_msg_thread())
         return;
-    for (int k = 0; k < AZMOD_STEM_COUNT; k++) {
+    /* All eight: the FX row's art follows the effects, and leaving FX mode must refresh it
+     * back to EP147's own index. */
+    for (int k = 0; k < 8; k++) {
         long tw = (long) wref_get(WSLOT(&g_tile_w[deck][k]));
         if (tilew_alive(tw))
             stemref_hook(tw);
@@ -1230,7 +1303,7 @@ static void stem_tiles_poke(int deck) {
 }
 /* stem_tiles_apply runs on the overlay thread, which may not touch EP147's widgets: it
  * only raises a per-deck bit, and the message thread pokes (stem_tiles_poke_drain). */
-static _Atomic unsigned g_tiles_poke_req;
+static _Atomic unsigned g_tiles_poke_req; /* also raised by drum8_index_apply */
 static void stem_tiles_poke_drain(void) {
     unsigned req = __atomic_exchange_n(&g_tiles_poke_req, 0, __ATOMIC_ACQ_REL);
     for (int d = 0; req && d < AZMOD_STEM_DECKS; d++)
@@ -1254,6 +1327,15 @@ static void stem_tiles_apply(int deck) {
             continue;
         g_pad_applied[deck][i] = st;
         changed = 1;
+    }
+    {
+        static unsigned fx_applied[AZMOD_STEM_DECKS];
+        unsigned fx = __atomic_load_n(&g_sfx_led_on[deck], __ATOMIC_RELAXED) |
+                      (az_get(AZF_STEM_FX) == 1 ? 0x100u : 0u);
+        if (fx != fx_applied[deck]) {
+            fx_applied[deck] = fx;
+            changed = 1;
+        }
     }
     stem_tiles_status(deck, changed ? "APPLIED" : "nochange");
     if (changed) /* the message thread pokes (stem_tiles_poke_drain, on rtick) */

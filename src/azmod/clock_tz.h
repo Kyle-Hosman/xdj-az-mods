@@ -141,19 +141,25 @@ static inline int ctz_offset(const struct ctz *z, int64_t t, int32_t *off) {
     return 0;
 }
 
-/* "1:05 PM" (12-hour) or "13:05" (24-hour) for UTC time t at offset off. */
-static inline void ctz_format(char *out, size_t n, int64_t t, int32_t off, int h24) {
+/* "1:05 PM" (12-hour) or "13:05" (24-hour) for UTC time t at offset off; with secs,
+ * "1:05:09 PM" or "13:05:09". */
+static inline void ctz_format(char *out, size_t n, int64_t t, int32_t off, int h24, int secs) {
     struct tm tm;
     time_t lt = (time_t) ((t < -(1LL << 40) || t > (1LL << 40)) ? 0 : t + off);
     if (t < -(1LL << 40) || t > (1LL << 40) || !gmtime_r(&lt, &tm)) {
         snprintf(out, n, "--:--");
         return;
     }
-    if (h24)
+    int h12 = tm.tm_hour % 12 ? tm.tm_hour % 12 : 12;
+    const char *ap = tm.tm_hour < 12 ? "AM" : "PM";
+    if (h24 && secs)
+        snprintf(out, n, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
+    else if (h24)
         snprintf(out, n, "%02d:%02d", tm.tm_hour, tm.tm_min);
+    else if (secs)
+        snprintf(out, n, "%d:%02d:%02d %s", h12, tm.tm_min, tm.tm_sec, ap);
     else
-        snprintf(out, n, "%d:%02d %s", tm.tm_hour % 12 ? tm.tm_hour % 12 : 12, tm.tm_min,
-                 tm.tm_hour < 12 ? "AM" : "PM");
+        snprintf(out, n, "%d:%02d %s", h12, tm.tm_min, ap);
 }
 /* The offset as the zone list shows it: "UTC-7", "UTC+5:30", "UTC+0". Minutes only where the
  * offset has them; an offset no zone has (past CTZ_MAX_OFF) is "UTC?". */

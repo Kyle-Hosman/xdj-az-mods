@@ -41,6 +41,8 @@ EXCLUDE=(
     '^guest/azmod/fxart\.h$'            # Beat FX panel art
     '^guest/azmod/fxbars\.h$'           # Drum Roll Beat FX bar labels
     '^guest/azmod/fxhdr\.h$'            # the Drum Roll X-PAD header bar
+    '^guest/azmod/holdtile\.h$'         # the Drum Roll HOLD pad tile
+    '^guest/azmod/sfxtile\.h$'          # the Stem FX pad tiles
     '^guest/azmod/menu_icons\.h$'       # Mod Menu icons, from the SVGs in azmod/icons
     '^guest/azmod/menulabels\.h$'       # MENU panel labels
     '^guest/azmod/collabels\.h$'        # the Browse COLUMNS button's labels

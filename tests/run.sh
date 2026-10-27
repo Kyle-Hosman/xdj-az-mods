@@ -25,7 +25,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PUB=$PWD
-for h in caption_strips collabels fxart fxbars fxhdr menulabels onelibkey onelibkey_sm srcref stems4art wavref; do
+for h in caption_strips collabels fxart fxbars fxhdr holdtile menulabels sfxtile onelibkey onelibkey_sm srcref stems4art wavref; do
     [ -f "src/azmod/$h.h" ] || { echo "src/azmod/$h.h is missing: run python3 tools/extract-assets.py <official azmod.so> first" >&2; exit 2; }
 done
 V=$PUB/tests/.work/tree

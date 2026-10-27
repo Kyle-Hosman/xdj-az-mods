@@ -66,6 +66,7 @@ static long g_dg8_stem[DGRID_GRIDS];
 static int g_drum_tile_repaint;
 static unsigned g_dg8_idx_refused;
 static int g_dg8_idx_logged = -1;
+static unsigned g_tiles_poke_req; /* stems_display.c's per-deck refresh requests */
 #include TILE_INC
 #include "check.h"
 
@@ -92,6 +93,7 @@ static void reset(void) {
     memset(g_drum_held, 0, sizeof g_drum_held);
     g_drum_arm = 1;
     g_drum_tile_repaint = 0;
+    g_tiles_poke_req = 0;
 }
 
 int main(void) {
@@ -107,6 +109,23 @@ int main(void) {
     g_drum_held[1] = 0;
     drum8_index_apply();
     CHECK("deck 2 released: tile 8 index -> red (0x19)", idx() == 0x19);
+    CHECK("released: deck 2's stem tiles refreshed (Stem FX shows again)", g_tiles_poke_req == 2u);
+    g_tiles_poke_req = 0;
+    drum8_index_apply();
+    CHECK("released once: no second refresh", g_tiles_poke_req == 0);
+
+    /* Never latched: the slot is the stems page's DRUMS ECHO tile, and Stem FX shows an effect
+     * that is on with its pressed art (0x18). The drum roll must not write it back. */
+    reset();
+    {
+        int pressed = 0x18;
+        memcpy(comp + 0xc8, &pressed, 4);
+    }
+    for (int t = 0; t < 3; t++)
+        drum8_index_apply();
+    CHECK("not latched: the stems page's tile is left as Stem FX set it", idx() == 0x18 &&
+                                                                              !g_drum_tile_repaint &&
+                                                                              !g_tiles_poke_req);
 
     reset();
     g_drum_held[1] = 1;

@@ -362,6 +362,16 @@ def clocktz():
     yield "no-footer", b"\4" + tzif(us[:3], [1, 0, 1], [-7 * 3600, -6 * 3600], b"")
     yield "v1-only", b"\5" + tzif([], [], [0], b"", ver=b"\0")
 
+@seed("wzsave")
+def wzsave():
+    for t in ("2/1", "1/1", "1/2", "1/4", "1/8", "1/16"):
+        yield "level-" + t.replace("/", "-"), t.encode()
+    yield "bad-1-32", b"1/32"
+    yield "bad-zero", b"01/4"
+    yield "bad-tail", b"1/4 "
+    yield "bad-empty", b""
+    yield "live-stock", b"\x01\x00\x04\x00"
+
 @seed("colwidths")
 def colwidths():
     yield "two", b"5:300 6:120\n"

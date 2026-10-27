@@ -15,35 +15,39 @@ static void compose_closed(azmod_state *s, const azmod_fb *fb) {
         fill_rect(fb, fx, fy, fw, fh, 0x00555555u); /* the field, EP147's search-box look */
         fill_rect(fb, fx + 1, fy + 1, fw - 2, fh - 2, 0x00000000u);
         const char *t = azmod_naming_text();
+        /* bold=2 (unhinted), as every Mod Menu label: the light hinter snaps each glyph's
+         * outline to the pixel grid on its own, so within one name the letter bottoms land
+         * on different rows. Unhinted glyphs share one exact baseline. The width calls use
+         * the same flag, so the caret and the tail cut match what is drawn. */
         int px = fh * 55 / 100, tx = fx + fb->w / 64;
         if (t && t[0]) { /* left-aligned like a text field (w 0); a long name shows its tail */
             int room = fw - fb->w / 32, n = (int) strlen(t),
-                cw = azmod_ttf_menu_width(t, n, px, 0);
+                cw = azmod_ttf_menu_width(t, n, px, 2);
             while (cw > room && *t) {
                 do {
                     t++;
                     n--;
                 } while (((unsigned char) *t & 0xc0) == 0x80); /* whole UTF-8 characters */
-                cw = azmod_ttf_menu_width(t, n, px, 0);
+                cw = azmod_ttf_menu_width(t, n, px, 2);
             }
-            azmod_ttf_menu(fb, tx, fy, 0, fh, t, px, 0, 0, 0x00ffffffu);
+            azmod_ttf_menu(fb, tx, fy, 0, fh, t, px, 0, 2, 0x00ffffffu);
             fill_rect(fb, tx + cw + 3, fy + fh / 5, 2, fh * 3 / 5, 0x00ffffffu); /* caret */
         } else {
             azmod_ttf_menu(fb, tx + 6, fy, 0, fh,
                            azmod_naming_rename()   ? "New name"
                            : azmod_naming_folder() ? "New folder name"
                                                    : "New playlist name",
-                           px, 0, 0, 0x00808080u);
+                           px, 0, 2, 0x00808080u);
             fill_rect(fb, tx, fy + fh / 5, 2, fh * 3 / 5, 0x00ffffffu);
         }
         fill_rect(fb, ca[0], ca[1], ca[2], ca[3],
                   0x003c3c3cu); /* CANCEL: EP147's idle row gray */
-        azmod_ttf_menu(fb, ca[0], ca[1], ca[2], ca[3], "CANCEL", ca[3] * 45 / 100, 0, 0,
+        azmod_ttf_menu(fb, ca[0], ca[1], ca[2], ca[3], "CANCEL", ca[3] * 45 / 100, 0, 2,
                        0x00ffffffu);
         fill_rect(fb, cr[0], cr[1], cr[2], cr[3],
                   0x00007de1u); /* CREATE: Pioneer's selection blue */
         azmod_ttf_menu(fb, cr[0], cr[1], cr[2], cr[3],
-                       azmod_naming_rename() ? "RENAME" : "CREATE", cr[3] * 45 / 100, 0, 0,
+                       azmod_naming_rename() ? "RENAME" : "CREATE", cr[3] * 45 / 100, 0, 2,
                        0x00ffffffu);
         return;
     }

@@ -18,7 +18,7 @@ around the mods are in [docs/](docs/README.md).
 
 | What | Why | Filled in by |
 |---|---|---|
-| UI art made from the firmware's own images: pad caption strips (`caption_strips.h`), Beat FX panel art (`fxart.h`, `fxhdr.h`, `fxbars.h`), MENU panel button faces (`menulabels.h`), the Browse COLUMNS button (`collabels.h`), 4-deck stem strips (`stems4art.h`), the SOURCE and title screen masks (`srcref.h`, `wavref.h`) | firmware-derived bytes | `tools/extract-assets.py`, from the `assets/*.h.in` templates |
+| UI art made from the firmware's own images: pad caption strips (`caption_strips.h`), Beat FX panel art (`fxart.h`, `fxhdr.h`, `fxbars.h`), the drum roll HOLD pad tile (`holdtile.h`), the Stem FX pad tiles (`sfxtile.h`), MENU panel button faces (`menulabels.h`), the Browse COLUMNS button (`collabels.h`), 4-deck stem strips (`stems4art.h`), the SOURCE and title screen masks (`srcref.h`, `wavref.h`) | firmware-derived bytes | `tools/extract-assets.py`, from the `assets/*.h.in` templates |
 | The `exportLibrary.db` key (`onelibkey.h`, `onelibkey_sm.h`), used to mark tracks that have stems | not publishable | the same script and templates |
 | Firmware and update files | not needed to build | |
 | Development-only code | compiled out of the release build | |

@@ -640,6 +640,7 @@ pinned = stems
 | `pinned` | the pinned rows, by key, comma separated (shown as SOURCE rows while `azmod-pinrows.on` exists) |
 | `theme` | the theme: `day`, `azmods`, `midnight`, `ember` or `forest`. Absent or unknown: `day`. Picking a theme also turns Themes on. |
 | `vinyl.brake` | Fine Vinyl Speed Adjust's slider value, `0.00` to `1.00`. Empty, missing or out of range: the deck's stock values. |
+| `wave.zoom` | the waveform zoom Remember Waveform Zoom last saved: `2/1`, `1/1`, `1/2`, `1/4`, `1/8` or `1/16`. Written only while that row is on; missing or anything else: nothing is restored. |
 | `bluetooth.channel` | a copy of `azmod-btchannel`, which stays the file azmod reads. Refreshed at every start and every save; empty means the file is absent (the default). |
 | `legacy.cfg-hash` | an FNV-1a hash of the `azmod.cfg` azmod last wrote. When `azmod.cfg` no longer matches, another version wrote it (going back to 1.2.2, then updating again): azmod takes every setting `azmod.cfg` holds from it, keeps the rest of `azmod.conf` (settings 1.2.2 does not have, community mods' rows, their pins) and saves. |
 | `<mod-id>:<key>` | a community mod's own rows; kept when the mod is removed, so reinstalling it restores them |

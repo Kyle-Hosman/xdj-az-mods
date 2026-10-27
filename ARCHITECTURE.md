@@ -488,13 +488,11 @@ captured from `AnalyzeManager::requestAnalyze`. A track change invalidates that 
 mappings so a reused allocation is never mistaken for the old object.
 
 **Decode.** On a track change the flusher looks for the track's stem folder under
-`<stick>/STEMS/` and the legacy `_MixRack_library/MixRack-stems` folder, and ranks every
-candidate:
+`<stick>/STEMS/` on every USB, and ranks every candidate:
 
 1. proven identity;
 2. the same USB;
-3. the name match (`<track>`, `<track>_` or `<track>-<8 hex digits>`, ignoring case);
-4. `STEMS/` before the legacy folder.
+3. the name match (`<track>`, `<track>_` or `<track>-<8 hex digits>`, ignoring case).
 
 The on-stick format is specified in [docs/STEMS-FORMAT.md](docs/STEMS-FORMAT.md). The flusher
 then starts a loader thread. Each stem is decoded with stb_vorbis to interleaved 44.1 kHz

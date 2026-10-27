@@ -79,6 +79,7 @@
 #define BE_BTN_LIS 0x210
 #define BE_ME_X 8
 #define BE_SHIFT 118 /* the button and the 8 px gap stock has between PREVIEW and the font buttons */
+_Static_assert(BE_SHIFT == BE_SEARCH_STEP, "the search bar gives up BE_SHIFT per button");
 #define BE_COLCLICK EP_248bfc0 /* juce::TableHeaderComponent::columnClicked(hdr, id, &mods): the sort toggle */
 #define BE_HDR_POC 27 /* juce::Component vtable slot paintOverChildren (EP147's TrackListHeader: empty) */
 #define BE_SETCOLOUR EP_23af140 /* juce::Graphics::setColour(g, &argb) */
@@ -349,6 +350,38 @@ static int be_child_of(uintptr_t c, uintptr_t par) {
 static void (*g_o_be_setvis)(long, int);
 static int g_be_vis[BE_FB_MAX]; /* COLUMNS shown: as EP147 last set previewButton */
 static void be_set_bounds(uintptr_t c, int x, int y, int w, int h);
+static int be_bounds(uintptr_t c, int r[4]);
+/* c's children (juce::Component +0x40 the array, +0x50 its count), at most cap; their number */
+static int be_kids(uintptr_t c, uintptr_t *out, int cap) {
+    uintptr_t data = 0, cnt = 0;
+    int n = 0;
+    if (!own_q(c + 0x40, &data) || !own_q(c + 0x50, &cnt) || !data || (data & 7))
+        return 0;
+    for (int k = 0; k < (int) (int32_t) cnt && n < cap; k++)
+        if (own_q(data + 8 * (uintptr_t) k, &out[n]) && out[n] && !(out[n] & 7))
+            n++;
+    return n;
+}
+/* The search bar narrowed by sh: its inner widgets and their children follow (browse_edit.h
+ * be_search_kid), so the clear button stays inside the bar. Only EP147's own two inner widget
+ * classes, and only children found at their stock places, are moved. */
+static void be_search_inner(uintptr_t search, int sh) {
+    uintptr_t in[4], kid[8];
+    int n = be_kids(search, in, 4);
+    for (int i = 0; i < n; i++) {
+        int r[4], o[4];
+        if (!b2_rtti_is(in[i], "N3gui11status_area6browse21NormalSearchBarWidgetE") &&
+            !b2_rtti_is(in[i], "N3gui11status_area6browse21SearchTracksBarWidgetE"))
+            continue;
+        if (!be_bounds(in[i], r) || !be_search_kid(r, sh, o))
+            continue;
+        be_set_bounds(in[i], o[0], o[1], o[2], o[3]);
+        int m = be_kids(in[i], kid, 8);
+        for (int k = 0; k < m; k++)
+            if (be_bounds(kid[k], r) && be_search_kid(r, sh, o))
+                be_set_bounds(kid[k], o[0], o[1], o[2], o[3]);
+    }
+}
 /* The status area's row: stock with COLUMNS added, and while editing RESET too, left of COLUMNS
  * (COLUMNS stays where it is; the title and the search bar give up the room). */
 static void be_layout(int i) {
@@ -367,6 +400,7 @@ static void be_layout(int i) {
     be_set_bounds(font, 118 + sh, 0, 110, 70);
     be_set_bounds(title, 112, 0, 540 - sh, 70);
     be_set_bounds(search, 102, 10, 544 - sh, 50);
+    be_search_inner(search, sh);
 }
 static void be_paint(int i) {
     *(int32_t *) (g_be_fb[i].btn + 0x1e0) = g_be_edit; /* the label set: lit while editing */

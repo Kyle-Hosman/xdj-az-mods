@@ -519,7 +519,7 @@ static long long sm_file_sig(const char *p) {
  * A playlist answer costs one azstem_has_stems per track (~26 ms each on the deck, cold
  * FAT lookups of long paths), and the same tracks sit in many playlists. The answer
  * depends only on the file and the stems folders, so it is cached by path and dropped
- * only when a STEMS / MixRack folder or the set of sticks changes (sm_stems_sig), not on
+ * only when a STEMS folder or the set of sticks changes (sm_stems_sig), not on
  * every library write (EP147 writes play history to the DB on track loads). A missing
  * file (-1) is never cached: a download can add it. */
 #define SM_PC 16384
@@ -573,8 +573,6 @@ static long long sm_stems_sig(void) {
         char p[300];
         s = s * 31 + sm_hash(de->d_name);
         snprintf(p, sizeof p, "/media/usb/%s/STEMS", de->d_name);
-        s = s * 31 + sm_file_sig(p);
-        snprintf(p, sizeof p, "/media/usb/%s/_MixRack_library/MixRack-stems", de->d_name);
         s = s * 31 + sm_file_sig(p);
     }
     closedir(rd);
@@ -934,8 +932,6 @@ static long long sm_world_sig(void) {
             (int) sizeof p)
             s = s * 31 + sm_file_sig(p);
         snprintf(p, sizeof p, "/media/usb/%s/STEMS", de->d_name);
-        s = s * 31 + sm_file_sig(p);
-        snprintf(p, sizeof p, "/media/usb/%s/_MixRack_library/MixRack-stems", de->d_name);
         s = s * 31 + sm_file_sig(p);
     }
     closedir(rd);

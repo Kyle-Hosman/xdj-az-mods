@@ -538,6 +538,18 @@ static void draw_item_icon_raw(const azmod_fb *fb, int x, int y, int sz, int ite
         aa_icon(fb, x, y, sz, sh, 6, c);
         break;
     }
+    case AZF_WAVE_ZOOM: { /* a magnifier with a plus (Remember Waveform Zoom) */
+        float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
+        float cx = X + S * .42f, cy = Y + S * .42f, R = S * .26f, p = S * .12f;
+        struct aa_shape sh[4] = {
+            {1, cx, cy, R, 0, w},
+            {0, X + S * .61f, Y + S * .61f, X + S * .86f, Y + S * .86f, w * 1.6f},
+            {0, cx - p, cy, cx + p, cy, w},
+            {0, cx, cy - p, cx, cy + p, w},
+        };
+        aa_icon(fb, x, y, sz, sh, 4, c);
+        break;
+    }
     case AZF_PHASE_METER: { /* two rulers with ticks, offset (Phase Meter) */
         float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
         float l = X + S * .10f, r = X + S * .90f, ya = Y + S * .36f, yb = Y + S * .68f,
@@ -567,6 +579,21 @@ static void draw_item_icon_raw(const azmod_fb *fb, int x, int y, int sz, int ite
                 0, cx + dx[k] * r0, cy + dy[k] * r0, cx + dx[k] * r1, cy + dy[k] * r1, w};
         sh[8] = (struct aa_shape) {1, cx, cy, S * .15f, 0, w};
         aa_icon(fb, x, y, sz, sh, 9, c);
+        break;
+    }
+    case AZF_DECK_KEY_TITLE: { /* a title bar: the title's line, a key mark at its end */
+        float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
+        float l = X + S * .10f, r = X + S * .90f, t = Y + S * .30f, b = Y + S * .70f,
+              m = Y + S * .50f;
+        struct aa_shape sh[6] = {
+            {0, l, t, r, t, w},
+            {0, l, b, r, b, w},
+            {0, l, t, l, b, w},
+            {0, r, t, r, b, w},
+            {0, X + S * .20f, m, X + S * .52f, m, w},
+            {1, X + S * .72f, m, S * .08f, 0, w},
+        };
+        aa_icon(fb, x, y, sz, sh, 6, c);
         break;
     }
     case AZF_HIDE_TRACK_TITLE: { /* an eye (Hide Track Title) */
@@ -759,6 +786,18 @@ static void c_text(const azmod_fb *fb, int x, int y, int w, int h, const char *s
     if (sc < 1)
         sc = 1;
     draw_text(fb, x, y + (h - 7 * sc) / 2, s, sc, c);
+}
+/* The text size of the value in a Mod Menu choice or bank button (official rows and community
+ * mods' rows alike): 40% of the button's height, smaller when it would not fit inside the button
+ * with a margin of an eighth of its width on each side, never below a quarter of its height. */
+static int c_btn_px(int w, int h, const char *s) {
+    int px = h * 40 / 100, room = w - w / 4, n = (int) strlen(s);
+    while (azmod_ttf_menu_width && px > h / 4 && azmod_ttf_menu_width(s, n, px, 2) > room)
+        px--;
+    return px;
+}
+static void c_btn_text(const azmod_fb *fb, int x, int y, int w, int h, const char *s, uint32_t c) {
+    c_text(fb, x, y, w, h, s, c_btn_px(w, h, s), c);
 }
 static void c_box(const azmod_fb *fb, int x, int y, int sz, bool on, uint32_t edge, uint32_t fill) {
     int t = sz / 8;

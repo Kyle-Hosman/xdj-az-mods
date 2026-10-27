@@ -161,16 +161,41 @@ int main(int argc, char **argv) {
     }
     CHECK("Denver truncated at every length: refused or unknown past the end", bad_trunc == 0);
 
-    ctz_format(t, sizeof t, JUL_2026, -6 * 3600, 0);
+    ctz_format(t, sizeof t, JUL_2026, -6 * 3600, 0, 0);
     CHECK("12-hour: 18:00 UTC in MDT is 12:00 PM", !strcmp(t, "12:00 PM"));
-    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600, -6 * 3600, 0);
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600, -6 * 3600, 0, 0);
     CHECK("12-hour: midnight is 12:00 AM", !strcmp(t, "12:00 AM"));
-    ctz_format(t, sizeof t, JUL_2026 + 65 * 60, -6 * 3600, 0);
+    ctz_format(t, sizeof t, JUL_2026 + 65 * 60, -6 * 3600, 0, 0);
     CHECK("12-hour: 1:05 PM", !strcmp(t, "1:05 PM"));
-    ctz_format(t, sizeof t, JUL_2026 + 65 * 60, -6 * 3600, 1);
+    ctz_format(t, sizeof t, JUL_2026 + 65 * 60, -6 * 3600, 1, 0);
     CHECK("24-hour: 13:05", !strcmp(t, "13:05"));
-    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600, -6 * 3600, 1);
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600, -6 * 3600, 1, 0);
     CHECK("24-hour: midnight is 00:00", !strcmp(t, "00:00"));
+
+    /* seconds on: h:mm:ss with the 12-hour marker, HH:MM:SS in 24-hour */
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600 + 5, -6 * 3600, 0, 1);
+    CHECK("12-hour seconds: 12:00:05 AM at midnight", !strcmp(t, "12:00:05 AM"));
+    ctz_format(t, sizeof t, JUL_2026, -6 * 3600, 0, 1);
+    CHECK("12-hour seconds: 12:00:00 PM at noon", !strcmp(t, "12:00:00 PM"));
+    ctz_format(t, sizeof t, JUL_2026 + 6 * 3600 + 59 * 60 + 59, -6 * 3600, 0, 1);
+    CHECK("12-hour seconds: 6:59:59 PM", !strcmp(t, "6:59:59 PM"));
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600 - 1, -6 * 3600, 0, 1);
+    CHECK("12-hour seconds: 11:59:59 PM", !strcmp(t, "11:59:59 PM"));
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600 + 5, -6 * 3600, 1, 1);
+    CHECK("24-hour seconds: 00:00:05 at midnight", !strcmp(t, "00:00:05"));
+    ctz_format(t, sizeof t, JUL_2026 + 12 * 3600 - 1, -6 * 3600, 1, 1);
+    CHECK("24-hour seconds: 23:59:59", !strcmp(t, "23:59:59"));
+    ctz_format(t, sizeof t, JUL_2026 + 65 * 60 + 9, -6 * 3600, 0, 1);
+    CHECK("12-hour seconds: 1:05:09 PM", !strcmp(t, "1:05:09 PM"));
+    ctz_format(t, sizeof t, JUL_2026 + 65 * 60 + 9, -6 * 3600, 0, 0);
+    CHECK("seconds off is the text without them", !strcmp(t, "1:05 PM"));
+    {
+        /* the longest text, with the " UTC" the UTC zone appends, fits the readout's buffer */
+        char u[16];
+        ctz_format(u, sizeof u, JUL_2026 - 6 * 3600 + 59 * 60 + 59, 0, 0, 1);
+        strncat(u, " UTC", sizeof u - strlen(u) - 1);
+        CHECK("longest seconds text plus UTC fits the 16-byte readout", !strcmp(u, "12:59:59 PM UTC"));
+    }
 
     /* the zone list's offsets */
     ctz_utc_label(t, sizeof t, -7 * 3600);

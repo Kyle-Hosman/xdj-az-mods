@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /**
  * @file extras.c
- * @brief Mod Menu extras: Hide Track Title and the Phase Meter (with its Phase Layout).
+ * @brief Mod Menu extras: Hide Track Title, Key in Track Title and the Phase Meter (with its
+ * Phase Layout).
  *
  * Hide Track Title patches the Label::setText vtable slots of gui::waveform::TrackInfo{2,4}DeckWidget
  * and SimpleWaveform{2,4}DeckWidget (the BROWSE strips), plus the PlayerInfo{2,4}DeckWidget
@@ -11,6 +12,10 @@
  * bar is recorded from an XNextEvent GOT hook and claimed from the per-frame setText call.
  * Gated by AZF_HIDE_TRACK_TITLE; the hooks stay installed and are inert while the mod is off.
  *
+ * Key in Track Title draws each deck's key, copied from the WAVEFORM tray's KEY widget after
+ * EP147 updates it, at the right end of the same title row, from the same paintOverChildren hook
+ * as the eye. Each feature there is behind its own switch (AZF_DECK_KEY_TITLE for the key).
+ *
  * Phase Meter inline-hooks LocalPlayer::update (per-deck bar position and tempo, kept in per-deck
  * atomics), reads the master deck from g_master_deck (stems_display.c), and paints the band from a
  * WaveformView paintOverChildren hook, repainting it through the internal area-repaint function.
@@ -19,8 +24,8 @@
  *
  * The grid-adjust setter address (WV_SET_GRIDADJ) is defined here; its hook lives in azmod.c.
  *
- * Entry points: install_hidetitle(), install_phasemeter(), plus the per-frame pm_tick() and
- * pl_tick() on the message thread.
+ * Entry points: install_hidetitle() (Key in Track Title's hook too), install_phasemeter(), plus
+ * the per-frame pm_tick() and pl_tick() on the message thread.
  */
 /* ---- Hide Track Title (Extras) -------
  * With the mod on, each deck's track-info bar shows an eye; a tap on the bar hides that
@@ -366,11 +371,17 @@ static int ht_title(void *self, void *str) {
     }
     return (__atomic_load_n(&g_ht_hide, __ATOMIC_RELAXED) & bit) != 0;
 }
+/* The title setters are shared by two features, each behind its own switch: Key in Track
+ * Title's per-frame step (kt_title: ages the key's copy, repaints the row when what it shows
+ * changes) and Hide Track Title's (ht_title: the tap, the eye, the swap). */
+static void kt_title(void *self);
 static void ht_hook2(void *self, void *str) {
+    kt_title(self);
     int hide = ht_title(self, str); /* always: it also draws the eye and takes the tap */
     g_ht_orig2(self, hide && ht_empty_ok() ? (void *) &g_ht_empty : str);
 }
 static void ht_hook4(void *self, void *str) {
+    kt_title(self);
     int hide = ht_title(self, str);
     g_ht_orig4(self, hide && ht_empty_ok() ? (void *) &g_ht_empty : str);
 }
@@ -392,27 +403,391 @@ static void ht_sw2(void *s, void *t) {
 static void ht_sw4(void *s, void *t) {
     ht_sw(s, t, g_ht_osw4);
 }
-/* the eye: the parent's paintOverChildren, at the right end of the title row */
-static void ht_paintover(void *comp, void *g) {
-    if (!ht_on() || !g || !ht_ptr_ok((uintptr_t) comp))
+/* ---- Key in Track Title (Extras) -------
+ * Each deck's key at the right end of its title row (left of Hide Track Title's eye when that
+ * shows), so the WAVEFORM screen's left tray, where EP147 shows KEY, can stay collapsed.
+ *
+ * The text is the tray's own: gui::waveform::KeyWidget (vt KT_KEYW_VT) writes the deck's key
+ * into its juce::Label (+0x140) in KT_KEYW_UPDATE, with the deck's key notation and Extras >
+ * Camelot Keys applied there (key_pane.c hooks the formatter that function calls). EP147 calls
+ * it about once a frame for each deck of the showing layout, also while the tray is collapsed
+ * (measured on the emulator: a track loaded with the tray collapsed updated it). An inline
+ * hook copies the Label's text after each call, while the Label is visible (without a track
+ * EP147 hides it and leaves a placeholder text in it). The deck is the KeyWidget's parent's:
+ * gui::waveform::DeckInfo{2,4}DeckWidget stores its ctor's deck argument at +0xd0 (both
+ * builds: str w3 of the ctor, called with 0..3). Anything else is no deck and copies nothing.
+ *
+ * The drawing is EP147's own text drawing with the title Label's own font (+0x178) and text
+ * colour (findColour textColourId, at half alpha while the Label is disabled, as JUCE's
+ * LookAndFeel_V2::drawLabel 0x2475210 does): juce::Graphics setColour, setFont and
+ * drawFittedText, right-justified and centred in the eye's band below ON AIR, inside saveState
+ * / restoreState. The String it draws is a per-deck juce::String assigned from the Label's own
+ * (a reference count, no allocation) when the text changes, never in paint.
+ *
+ * Threads: every function here runs on the JUCE message thread (EP147's widget updates, its
+ * title setters and its paint), except kt_runtime_init (the overlay thread, once, before the
+ * release store of g_kt_ok that the message thread acquires). g_kt is message thread only. */
+#include "kt_layout.h"
+#define KT_KEYW_UPDATE EP_1d76f18 /* KeyWidget: writes the tray KEY Label (see the V200 basis) */
+#define KT_KEYW_VT EP_2cedcf8     /* gui::waveform::KeyWidget */
+#define KT_DI2_VT EP_2cfe0f0      /* gui::waveform::DeckInfo2DeckWidget */
+#define KT_DI4_VT EP_2cfe5c0      /* gui::waveform::DeckInfo4DeckWidget */
+#define KT_DI_DECK 0xd0
+#define KT_KEYW_LABEL 0x140
+#define KT_LABEL_VT EP_31592e0 /* juce::Label */
+#define KT_LABEL_TEXT 0x170    /* juce::Label lastTextValue (the String setText stores) */
+#define KT_LABEL_FONT 0x178    /* juce::Label font */
+#define KT_TITLE_LABEL ep_off(0x168, 0x1d0) /* TrackInfo{2,4}DeckWidget: its title Label */
+#define KT_FINDCOLOUR EP_2471200 /* juce::Component::findColour(id), Colour through x8 */
+#define KT_ISENABLED EP_2437090  /* juce::Component::isEnabled() */
+#define KT_MULALPHA EP_23a54e0   /* juce::Colour::withMultipliedAlpha(float), result through x8 */
+#define KT_TEXT_COLOUR_ID 0x1000281 /* juce::Label::textColourId */
+#define KT_SETCOLOUR EP_23af140     /* juce::Graphics::setColour(Colour) */
+#define KT_SETFONT EP_23af590       /* juce::Graphics::setFont(const Font &) */
+#define KT_DRAWFITTED EP_23eb200 /* juce::Graphics::drawFittedText(String, Rectangle<int>, Justification, int, float) */
+#define KT_STR_ASSIGN EP_230f5c0 /* juce::String::operator=(const String &) */
+#define KT_JUST_RIGHT 0x22       /* juce::Justification::centredRight */
+#define KT_MIN_SCALE 0.8f        /* a key squeezes at most this far, then it is cut */
+#define KT_LOG_CHANGES 64
+static int kt_on(void) {
+    return az_on(AZF_DECK_KEY_TITLE) && az_active(AZF_DECK_KEY_TITLE);
+}
+/* Tap the key: a tap on the key drawn in a deck's title row opens that deck's key shift panel,
+ * gui::performance::KeyShiftWidget, EP147's own (the one the tray's KEY row arrow opens). Each
+ * DeckInfo{2,4}DeckWidget owns one (+0x1f0 / +0x1b0) next to its KeyWidget (+0x210 / +0x1b8),
+ * and its mouseDown (vtable slot 5) is the whole open path: a press inside the KeyWidget, the
+ * KeyWidget's arrow enabled (KT_ARROW_OK), then Component::setVisible(!isVisible) on the
+ * panel's juce::Component (a virtual base at +0x70). EP147 refreshes the open panel each frame
+ * from the same widget and closes it itself when the deck has no track.
+ *
+ * With the tray collapsed EP147 gives DeckInfo4DeckFieldWidget, the tray's body, a width of 0,
+ * which clips the panel away. So the open moves the panel's Component into the WAVEFORM view
+ * (gui::waveform::WaveformView, the ancestor whose vtable is KT_VIEW_VT) with JUCE's own
+ * removeChildComponent / addChildComponent, the two calls Component::addAndMakeVisible makes,
+ * places it above the deck's title row, then shows it. Once it closes (a second tap on the key,
+ * the tray's arrow, EP147's own close), the switch goes off, or the deck's widget stops being
+ * updated (another layout shows), it goes back to its own parent at its own index and bounds,
+ * so EP147's tray sees it exactly as it left it.
+ *
+ * The tap: Hide Track Title's XNextEvent hook records every whole tap (it calls no EP147 code
+ * for this feature). The deck's title setter, before Hide Track Title's step, claims a tap on
+ * the key's tap target when kt_tap_owner gives it to the key (JUCE's hit test asked there, on
+ * the message thread), so Hide Track Title never sees it; a tap elsewhere on the bar stays Hide
+ * Track Title's. The claim is acted on in the deck's next KeyWidget update, which holds the
+ * live DeckInfo widget. Every object is vtable-checked at use, the cached ones included. */
+#define KT_DI2_PANEL 0x1f0        /* DeckInfo2DeckWidget: its KeyShiftWidget */
+#define KT_DI2_KEYW 0x210         /* DeckInfo2DeckWidget: its KeyWidget */
+#define KT_DI4_PANEL 0x1b0        /* DeckInfo4DeckWidget: its KeyShiftWidget */
+#define KT_DI4_KEYW 0x1b8         /* DeckInfo4DeckWidget: its KeyWidget */
+#define KT_PANEL_VT EP_2b88870    /* gui::performance::KeyShiftWidget */
+#define KT_PANEL_CVT EP_2b88a48   /* its juce::Component (offset-to-top -0x70) */
+#define KT_PANEL_COMP 0x70        /* the Component within the KeyShiftWidget */
+#define KT_ARROW_OK EP_1d77468    /* KeyWidget: its KEY row arrow is enabled */
+#define KT_SETVISIBLE EP_249daf0  /* juce::Component::setVisible(bool), the Component's slot 12 */
+#define KT_REMOVE_CHILD EP_249a4b0 /* juce::Component::removeChildComponent(Component *) */
+#define KT_ADD_CHILD EP_2485140   /* juce::Component::addChildComponent(child, zOrder) */
+#define KT_SETBOUNDS EP_249efe0   /* juce::Component::setBounds(x, y, w, h) */
+#define KT_VIEW_VT EP_29e9790     /* gui::waveform::WaveformView */
+static struct {
+    char text[KT_TEXT_MAX];  /* the tray's key as last copied ("" = none) */
+    char drawn[KT_TEXT_MAX]; /* what the row's last paint drew */
+    unsigned age;            /* title frames since the copy */
+    uintptr_t str;           /* a juce::String (its text pointer) holding text */
+    /* tap the key */
+    int hit[4];              /* the tap target on screen, valid while drawn[0] */
+    int key_right, bar_top, bar_bottom; /* screen: the key's right edge, the bar's span */
+    unsigned pend;           /* a claimed tap: title frames waiting (0 = none) */
+    uintptr_t keyw_par;      /* the DeckInfo widget whose KeyWidget last updated this deck */
+    uintptr_t moved, moved_par; /* the panel moved into the view, and its own parent */
+    int moved_z, moved_b[4]; /* its index and bounds in that parent */
+} g_kt[4];
+static _Atomic int g_kt_ok; /* the Strings are built */
+static void (*g_kt_okeyw)(void *);
+static int g_kt_logged;
+#ifdef SK_HAVE_HOOK
+/* Calls fn(a, b) with x8 = out, the C++ indirect result, and s0 = f for a float argument. */
+__attribute__((visibility("hidden"))) void kt_call_x8(void *fn, void *out, uintptr_t a, uintptr_t b,
+                                                      float f);
+__asm__(".text\n"
+        ".p2align 2\n" SK_FN(kt_call_x8) "    stp x29, x30, [sp, #-16]!\n"
+                                         "    mov x29, sp\n"
+                                         "    mov x9, x0\n"
+                                         "    mov x8, x1\n"
+                                         "    mov x0, x2\n"
+                                         "    mov x1, x3\n"
+                                         "    blr x9\n"
+                                         "    ldp x29, x30, [sp], #16\n"
+                                         "    ret\n" SK_END(kt_call_x8));
+#endif
+/* p when it is an aligned object whose vtable is vt, else 0 */
+static uintptr_t kt_obj(uintptr_t p, uintptr_t vt) {
+    return ht_ptr_ok(p) && *(volatile uintptr_t *) p == vt ? p : 0;
+}
+static int kt_visible(uintptr_t c) {
+    return (*(volatile uint32_t *) (c + 0xc0) & 2) != 0;
+}
+static void kt_set_visible(uintptr_t c, int on) {
+    ((void (*)(uintptr_t, int)) KT_SETVISIBLE)(c, on);
+}
+/* A DeckInfo{2,4}DeckWidget's key shift panel Component, and its KeyWidget in *kw: 0 unless
+ * par is one, the panel is a KeyShiftWidget whose Component is where its vtable says, and that
+ * Component's setVisible slot is JUCE's. */
+static uintptr_t kt_panel_of(uintptr_t par, uintptr_t *kw) {
+    int di2 = kt_obj(par, KT_DI2_VT) != 0;
+    if (!di2 && !kt_obj(par, KT_DI4_VT))
+        return 0;
+    uintptr_t ksw = kt_obj(*(volatile uintptr_t *) (par + (di2 ? KT_DI2_PANEL : KT_DI4_PANEL)),
+                           KT_PANEL_VT);
+    if (!ksw || *(volatile long *) (KT_PANEL_VT - 0x18) != KT_PANEL_COMP) /* its vbase offset */
+        return 0;
+    uintptr_t c = kt_obj(ksw + KT_PANEL_COMP, KT_PANEL_CVT);
+    if (!c || *(volatile uintptr_t *) (KT_PANEL_CVT + 12 * 8) != KT_SETVISIBLE)
+        return 0;
+    *kw = kt_obj(*(volatile uintptr_t *) (par + (di2 ? KT_DI2_KEYW : KT_DI4_KEYW)), KT_KEYW_VT);
+    return *kw ? c : 0;
+}
+/* c's index in parent p's child list (data +0x40, numUsed +0x50), or -1 */
+static int kt_child_index(uintptr_t p, uintptr_t c) {
+    uintptr_t kids = *(volatile uintptr_t *) (p + 0x40);
+    int n = *(volatile int *) (p + 0x50);
+    if (!ht_ptr_ok(kids) || n <= 0 || n > 256)
+        return -1;
+    for (int i = 0; i < n; i++)
+        if (*(volatile uintptr_t *) (kids + 8 * i) == c)
+            return i;
+    return -1;
+}
+static void kt_log(const char *what, int d, int x, int y) {
+    static int n;
+    if (n >= KT_LOG_CHANGES)
         return;
-    uintptr_t pv = *(volatile uintptr_t *) comp;
-    uintptr_t full =
-        (uintptr_t) comp + (uintptr_t) *(volatile long *) (pv - 0x10); /* offset-to-top */
-    if (!ht_ptr_ok(full))
+    n++;
+    FILE *f = azlog_open("/tmp/azmod-hidetitle.log", "a");
+    if (f) {
+        fprintf(f, "key tap: deck %d %s %d,%d\n", d + 1, what, x, y);
+        fclose(f);
+    }
+}
+/* Deck d's panel back home, unless it should stay open in the view: it is still open, the
+ * switch is on, and the deck's own widget is still the one EP147 updates. Message thread,
+ * from the title setter (every frame) and from a close. */
+static void kt_panel_home(int d) {
+    uintptr_t c = g_kt[d].moved, op = g_kt[d].moved_par, kw = 0;
+    if (!c)
         return;
-    uintptr_t fvt = *(volatile uintptr_t *) full;
-    if (fvt != HT_PI2D_VT && fvt != HT_PI4D_VT)
-        return;
-    int d = *(volatile int *) (full + HT_DECK_OFF), row[4];
-    if (d < 0 || d >= 4)
-        return;
-    unsigned bit = 1u << d;
-    int bar[3];
-    if (!(g_ht_has & bit) || !ht_row_ex((uintptr_t) comp, row, 0, bar)) {
-        g_ht_drawn &= ~bit;
+    if (kt_panel_of(op, &kw) != c) { /* not the panel it was: nothing to put back */
+        g_kt[d].moved = 0;
         return;
     }
+    if (kt_visible(c) && kt_on() && g_kt[d].age < KT_STALE_FRAMES && g_kt[d].keyw_par == op)
+        return;
+    if (kt_visible(c))
+        kt_set_visible(c, 0);
+    uintptr_t cur = *(volatile uintptr_t *) (c + 0x18);
+    if (cur != op) {
+        if (ht_ptr_ok(cur))
+            ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(cur, c);
+        ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(op, c, g_kt[d].moved_z);
+    }
+    ((void (*)(uintptr_t, int, int, int, int)) KT_SETBOUNDS)(c, g_kt[d].moved_b[0], g_kt[d].moved_b[1],
+                                                             g_kt[d].moved_b[2], g_kt[d].moved_b[3]);
+    g_kt[d].moved = 0;
+    kt_log("panel home", d, g_kt[d].moved_b[0], g_kt[d].moved_b[1]);
+}
+/* A claimed tap on deck d's key, from the deck's KeyWidget update (kw, its DeckInfo par): close
+ * the panel when it is open, else open it above the title row the way the tray's arrow does
+ * (same gate, same setVisible), moved into the WAVEFORM view so a collapsed tray cannot clip it. */
+static void kt_panel_toggle(int d, uintptr_t kw, uintptr_t par) {
+    uintptr_t own = 0, c = kt_panel_of(par, &own);
+    if (!c || own != kw)
+        return;
+    if (kt_visible(c)) {
+        kt_set_visible(c, 0);
+        kt_panel_home(d);
+        kt_log("closed", d, 0, 0);
+        return;
+    }
+    if (!g_kt[d].drawn[0] || !((int (*)(uintptr_t)) KT_ARROW_OK)(kw))
+        return;
+    if (g_kt[d].moved) /* a stale move of this deck's other layout: home first */
+        kt_panel_home(d);
+    if (g_kt[d].moved || *(volatile uintptr_t *) (c + 0x18) != par)
+        return;
+    uintptr_t view = par;
+    for (int i = 0; i < 8 && view && !kt_obj(view, KT_VIEW_VT); i++)
+        view = ht_parent(view);
+    int area[4], x, y, z = kt_child_index(par, c);
+    int w = *(volatile int *) (c + 0x28), h = *(volatile int *) (c + 0x2c);
+    if (!kt_obj(view, KT_VIEW_VT) || z < 0 || !ht_screen_rect(view, area) ||
+        !kt_panel_at(w, h, g_kt[d].key_right, g_kt[d].bar_top, g_kt[d].bar_bottom, area,
+                     KT_PANEL_TOP, &x, &y))
+        return;
+    g_kt[d].moved_z = z;
+    for (int i = 0; i < 4; i++)
+        g_kt[d].moved_b[i] = *(volatile int *) (c + 0x20 + 4 * i);
+    ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(par, c);
+    ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(view, c, -1);
+    ((void (*)(uintptr_t, int, int, int, int)) KT_SETBOUNDS)(c, x - area[0], y - area[1], w, h);
+    g_kt[d].moved = c;
+    g_kt[d].moved_par = par;
+    kt_set_visible(c, 1);
+    kt_log("opened", d, x, y);
+}
+/* KT_KEYW_UPDATE, after EP147's own: copy the deck's key as the tray now shows it */
+static void kt_keyw_hook(void *self) {
+    g_kt_okeyw(self);
+    if (!__atomic_load_n(&g_kt_ok, __ATOMIC_ACQUIRE) || !kt_on())
+        return;
+    uintptr_t kw = kt_obj((uintptr_t) self, KT_KEYW_VT), par, lab;
+    if (!kw)
+        return;
+    par = *(volatile uintptr_t *) (kw + 0x18); /* juce parentComponent */
+    if (!kt_obj(par, KT_DI2_VT) && !kt_obj(par, KT_DI4_VT))
+        return;
+    int d = *(volatile int *) (par + KT_DI_DECK);
+    if (d < 0 || d >= 4)
+        return;
+    g_kt[d].keyw_par = par;
+    if (g_kt[d].pend) { /* a tap on the key, claimed by the title setter */
+        g_kt[d].pend = 0;
+        kt_panel_toggle(d, kw, par);
+    }
+    lab = kt_obj(*(volatile uintptr_t *) (kw + KT_KEYW_LABEL), KT_LABEL_VT);
+    if (!lab)
+        return;
+    char t[KT_TEXT_MAX + 1];
+    uintptr_t sp = *(volatile uintptr_t *) (lab + KT_LABEL_TEXT);
+    int vis = (*(volatile uint32_t *) (lab + 0xc0) & 2) != 0, ok = own_str(sp, t, sizeof t);
+    g_kt[d].age = 0;
+    if (!kt_store(g_kt[d].text, ok ? t : "", vis))
+        return;
+    if (g_kt[d].text[0])
+        ((void (*)(uintptr_t *, uintptr_t)) KT_STR_ASSIGN)(&g_kt[d].str, lab + KT_LABEL_TEXT);
+    if (g_kt_logged < KT_LOG_CHANGES) {
+        g_kt_logged++;
+        FILE *f = azlog_open("/tmp/azmod-hidetitle.log", "a");
+        if (f) {
+            fprintf(f, "key title: deck %d key \"%s\" (widget %#lx)\n", d + 1, g_kt[d].text,
+                    (unsigned long) kw);
+            fclose(f);
+        }
+    }
+}
+/* A whole tap on deck d's key (self = its TrackInfo widget, live: EP147 is calling its title
+ * setter): claim it before Hide Track Title's step can, and leave it for the deck's next KeyWidget
+ * update. A tap not on the drawn key, or one JUCE gives to something shown over the row, is not
+ * the key's. */
+static void kt_tap_key(void *self, int d) {
+    unsigned long t = __atomic_load_n(&g_ht_tap, __ATOMIC_ACQUIRE);
+    unsigned seq = (unsigned) (t >> 32), done = __atomic_load_n(&g_ht_tap_done, __ATOMIC_RELAXED);
+    if (seq == done || now_ms() - __atomic_load_n(&g_ht_tap_ms, __ATOMIC_RELAXED) > HT_TAP_TTL_MS)
+        return;
+    int x = (int) (t & 0xffff), y = (int) (t >> 16 & 0xffff), on = kt_on();
+    int shown = g_kt[d].drawn[0] != 0, in_key = shown && kt_in(g_kt[d].hit, x, y);
+    if (!on || !in_key)
+        return;
+    uintptr_t comp = (uintptr_t) self + HT_COMP_OFF, par = ht_parent(comp), root = par;
+    if (!par || (*(volatile uintptr_t *) par != HT_PI2D_CVT && *(volatile uintptr_t *) par != HT_PI4D_CVT))
+        return;
+    for (int i = 0; i < HT_COVER_DEPTH && ht_parent(root); i++)
+        root = ht_parent(root);
+    uintptr_t owner[HT_COVER_DECKS] = {0};
+    owner[d] = par;
+    int juce_ok = (ht_cover_mask(owner, root, x, y, ht_at, ht_parent) >> d) & 1u;
+    if (kt_tap_owner(on, shown, in_key, juce_ok, ht_on(), 1) != KT_TAP_KEY)
+        return;
+    if (__atomic_compare_exchange_n(&g_ht_tap_done, &done, seq, 0, __ATOMIC_RELAXED,
+                                    __ATOMIC_RELAXED)) {
+        g_kt[d].pend = 1;
+        kt_log("tap", d, x, y);
+    }
+}
+/* the title setter, every frame for each deck on screen: age the copy, take a tap on the key,
+ * put a closed panel back, and repaint the row when what it should show is not what it drew */
+static void kt_title(void *self) {
+    if (!__atomic_load_n(&g_kt_ok, __ATOMIC_ACQUIRE))
+        return;
+    int d = ht_deck((uintptr_t) self);
+    if (d < 0)
+        return;
+    kt_age_tick(&g_kt[d].age);
+    kt_tap_key(self, d);
+    if (g_kt[d].pend && ++g_kt[d].pend > KT_PEND_FRAMES)
+        g_kt[d].pend = 0; /* the deck's KeyWidget did not update: let it go */
+    kt_panel_home(d);
+    const char *want = kt_want(kt_on(), g_kt[d].age, g_kt[d].text);
+    if (strcmp(want, g_kt[d].drawn)) {
+        uintptr_t par = *(volatile uintptr_t *) ((char *) self + HT_COMP_OFF + 0x18);
+        if (ht_ptr_ok(par))
+            ((void (*)(void *)) JUCE_COMPONENT_REPAINT)((void *) par); /* the key is the parent's */
+    }
+}
+/* The key in deck d's row, from the PlayerInfo component's paint (EP147 is painting it, so
+ * its TrackInfo child ti and that child's title Label are alive): row[] from ht_row_ex,
+ * bar[] from ht_row_ex, eye_left = the eye's left edge or -1. Called only when kt_plan_for says
+ * the key shows. The key's box runs from the title Label's right edge (so the title, which EP147
+ * fits inside its Label, never runs under the key) to the eye or the row's end; vertically it is
+ * the eye's band, between ON AIR's bottom and the bar's bottom, so it never runs under the ON AIR
+ * badge and does not move when the badge shows. */
+static void kt_paint(void *g, int d, const int row[4], const int bar[3], uintptr_t ti, int eye_left) {
+#ifdef SK_HAVE_HOOK
+    if (!g_kt[d].text[0] || !g_kt[d].str || !ht_ptr_ok(ti))
+        return;
+    uintptr_t lab =
+        kt_obj(*(volatile uintptr_t *) (ti - HT_COMP_OFF + KT_TITLE_LABEL), KT_LABEL_VT);
+    if (!lab || *(volatile uintptr_t *) (lab + 0x18) != ti) /* the title Label, ti's child */
+        return;
+    int lx = *(volatile int *) (ti + 0x20) + *(volatile int *) (lab + 0x20),
+        lw = *(volatile int *) (lab + 0x28);
+    struct kt_rect r;
+    if (!kt_key_rect(lx + lw, eye_left, row[0] + row[2], HT_PAD_RIGHT, bar[2], bar[1] - bar[2], &r))
+        return;
+    uint32_t col[2] = {0, 0}, dim[2] = {0, 0};
+    kt_call_x8((void *) KT_FINDCOLOUR, col, lab, KT_TEXT_COLOUR_ID, 0.f);
+    if (!((int (*)(uintptr_t)) KT_ISENABLED)(lab)) {
+        kt_call_x8((void *) KT_MULALPHA, dim, (uintptr_t) col, 0, 0.5f);
+        col[0] = dim[0];
+    }
+    int rect[4] = {r.x, r.y, r.w, r.h}, just = KT_JUST_RIGHT;
+    ((void (*)(void *)) JUCE_G_SAVESTATE)(g);
+    ((void (*)(void *, const uint32_t *)) KT_SETCOLOUR)(g, col);
+    ((void (*)(void *, uintptr_t)) KT_SETFONT)(g, lab + KT_LABEL_FONT);
+    ((void (*)(void *, const uintptr_t *, const int *, const int *, int, float)) KT_DRAWFITTED)(
+        g, &g_kt[d].str, rect, &just, 1, KT_MIN_SCALE);
+    ((void (*)(void *)) JUCE_G_RESTORESTATE)(g);
+    strcpy(g_kt[d].drawn, g_kt[d].text);
+    int sr[4]; /* the tap target and the panel's anchor, on screen (the row is ti's parent) */
+    uintptr_t rowc = *(volatile uintptr_t *) (ti + 0x18);
+    if (ht_ptr_ok(rowc) && ht_screen_rect(rowc, sr)) {
+        kt_hit_rect(&r, sr[0], sr[1], bar[0], bar[1], g_kt[d].hit);
+        g_kt[d].key_right = sr[0] + r.x + r.w;
+        g_kt[d].bar_top = sr[1] + bar[0];
+        g_kt[d].bar_bottom = sr[1] + bar[1];
+    } else
+        g_kt[d].hit[2] = 0;
+#else
+    (void) g, (void) d, (void) row, (void) bar, (void) ti, (void) eye_left;
+#endif
+}
+/* Overlay thread, once EP147 runs: the four Strings start as "" (EP147's String ctor) */
+static void kt_runtime_init(void) {
+    if (__atomic_load_n(&g_kt_ok, __ATOMIC_ACQUIRE))
+        return;
+    for (int d = 0; d < 4; d++)
+        ((void (*)(uintptr_t *, const char *)) JSTR_FROM_CSTR)(&g_kt[d].str, "");
+    __atomic_store_n(&g_kt_ok, 1, __ATOMIC_RELEASE);
+}
+static int install_keytitle(void) {
+    uintptr_t cur = 0;
+    if (!img_q(KT_KEYW_VT, &cur) || !cur) /* the vtable is in EP147's image */
+        return -2;
+    return azm_install_hook(KT_KEYW_UPDATE, (void *) kt_keyw_hook, (void **) &g_kt_okeyw);
+}
+/* The eye (Hide Track Title only, with a title on deck d): at the right end of the title row of
+ * deck d's PlayerInfo component, row[] and bar[] from ht_row_ex. Returns the eye's left
+ * edge in the row's coordinates, or -1 when it draws none. */
+static int ht_eye(void *g, int d, const int row[4], const int bar[3]) {
+    unsigned bit = 1u << d;
     int k = (__atomic_load_n(&g_ht_hide, __ATOMIC_RELAXED) & bit) ? 1 : 0;
     if (!g_ht_eye[k]) {
         uintptr_t img = 0, q = 0;
@@ -421,7 +796,7 @@ static void ht_paintover(void *comp, void *g) {
         /* our own juce::Image, just decoded and held by this call: a plain load */
         if (!img || !own_q(img + 0x10, &q) || (int) (uint32_t) q != EYE_W ||
             (int) (uint32_t) (q >> 32) != EYE_H)
-            return;
+            return -1;
         g_ht_eye[k] = img;
     }
     /* Vertical: the space between ON AIR's bottom and the bar's bottom, less the ink, split
@@ -435,6 +810,44 @@ static void ht_paintover(void *comp, void *g) {
     ((void (*)(void *, uintptr_t *, int, int, int, int, int, int, int, int, int)) EP_23de290)(
         g, &holder, ex, ey, EYE_W, EYE_H, 0, 0, EYE_W, EYE_H, 0);
     g_ht_drawn |= bit;
+    return ex + HT_INK_L;
+}
+/* PlayerInfo{2,4}DeckWidget's paintOverChildren, after EP147's own (empty) one: the one hook
+ * the two title row features share. It resolves the deck and the row, then each feature draws
+ * behind its own switch only (kt_plan_for): the eye with Hide Track Title on, the key with Key
+ * in Track Title on, left of the eye when both show. With Hide Track Title off the key takes
+ * the eye's place at the row's right end. */
+static void kt_paint(void *g, int d, const int row[4], const int bar[3], uintptr_t ti, int eye_left);
+static void ht_paintover(void *comp, void *g) {
+    if (!g || !ht_ptr_ok((uintptr_t) comp))
+        return;
+    uintptr_t pv = *(volatile uintptr_t *) comp;
+    uintptr_t full =
+        (uintptr_t) comp + (uintptr_t) *(volatile long *) (pv - 0x10); /* offset-to-top */
+    if (!ht_ptr_ok(full))
+        return;
+    uintptr_t fvt = *(volatile uintptr_t *) full;
+    if (fvt != HT_PI2D_VT && fvt != HT_PI4D_VT)
+        return;
+    int d = *(volatile int *) (full + HT_DECK_OFF), row[4], bar[3];
+    if (d < 0 || d >= 4)
+        return;
+    uintptr_t ti = 0;
+    int have_row = ht_row_ex((uintptr_t) comp, row, &ti, bar);
+    int ht = ht_on(), kt = kt_on();
+    struct kt_plan plan =
+        kt_plan_for(ht, (g_ht_has >> d) & 1u, kt, kt_want(kt, g_kt[d].age, g_kt[d].text));
+    g_kt[d].drawn[0] = 0; /* kt_paint sets it to what it draws */
+    if (!have_row) {
+        if (ht)
+            g_ht_drawn &= ~(1u << d);
+        return;
+    }
+    if (ht && !plan.eye)
+        g_ht_drawn &= ~(1u << d);
+    int eye_left = plan.eye ? ht_eye(g, d, row, bar) : -1;
+    if (plan.key)
+        kt_paint(g, d, row, bar, ti, eye_left);
 }
 static void ht_poc2(void *c, void *g) {
     g_ht_opoc2(c, g);
@@ -453,6 +866,7 @@ static int ht_patch_if(uintptr_t slot, uintptr_t want, void *hook, void **orig) 
 /* Always installed (inert while the mod is off), so the Mod Menu switch acts at once. */
 /* Overlay thread, once: the empty juce::String the title hooks substitute. */
 static void ht_runtime_init(void) {
+    kt_runtime_init(); /* Key in Track Title's Strings: the same moment, its own state */
     if (ht_empty_ok())
         return;
     ((void (*)(void *, const char *)) JSTR_FROM_CSTR)(&g_ht_empty, "");
@@ -469,10 +883,11 @@ static void install_hidetitle(void) {
     int s2 = ht_patch_if(HT_SW_SLOT2, HT_SW_ORIG2, (void *) ht_sw2, (void **) &g_ht_osw2);
     int s4 = ht_patch_if(HT_SW_SLOT4, HT_SW_ORIG4, (void *) ht_sw4, (void **) &g_ht_osw4);
     int t = (a == 1 || b == 1) ? ht_install_xnext() : -9;
+    int k = (a == 1 || b == 1) && (p2 == 1 || p4 == 1) ? install_keytitle() : -9;
     FILE *f = azlog_open("/tmp/azmod-hidetitle.log", "a");
     if (f) {
-        fprintf(f, "install hidetitle: title %d/%d eye %d/%d strips %d/%d tap %d\n", a, b, p2, p4,
-                s2, s4, t);
+        fprintf(f, "install hidetitle: title %d/%d eye %d/%d strips %d/%d tap %d key %d\n", a, b, p2,
+                p4, s2, s4, t, k);
         fclose(f);
     }
 }

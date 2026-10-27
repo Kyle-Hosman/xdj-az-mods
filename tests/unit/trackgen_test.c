@@ -8,7 +8,9 @@
  *   - a transient probe miss (empty for fewer ticks) changes nothing;
  *   - the other decks' generations never move;
  *   - azmod sees the new name and the new generation together (the bump comes before the
- *     curtrack publish), so it resets the deck's toggles once, not twice. */
+ *     curtrack publish), so it resets the deck's toggles once, not twice;
+ *   - with no stems base (no stick holds a STEMS folder) the generation still moves on load
+ *     and eject, nothing is loaded, and the deck's track loads once a base turns up. */
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -29,7 +31,7 @@ static const int STEM_SLOT[NDECK] = {0, 1, 2, 3};
 static _Atomic unsigned g_deck_trackgen[NDECK];
 static _Atomic int g_stem_pending[NDECK], g_stem_loading[NDECK], g_load_again[NDECK];
 static char g_stems_base[512] = "/media/usb/STEMS";
-static int g_eject_empty[NDECK];
+static int g_eject_empty[NDECK], g_load_deferred[NDECK];
 static char g_pending_name[NDECK][512], g_loaded_src[NDECK][600], g_pending_src[NDECK][600];
 #define EJECT_EMPTY_TICKS 8
 
@@ -50,9 +52,10 @@ static void loaded_track_path(int d, char *out, size_t n) {
     if (!g_name[d] || !g_name[d][0]) out[0] = 0;
 }
 static void drop_stems(int d) { g_dk[d].stem_frames = 0; }
+static int g_starts[NDECK]; /* start_load calls per deck */
 static void start_load(int d, const char *tr) {
-    (void) d;
     (void) tr;
+    g_starts[d]++;
 }
 static void publish_src(int d) { (void) d; }
 static void publish_deck_file(int d, const char *what, const char *v) {
@@ -98,5 +101,32 @@ int main(void) {
     CHECK("reloading the same track after an eject bumps again", gen(0) == g1 + 2 && (int) gen(0) == 3);
     CHECK("other decks never moved", gen(1) == 0 && gen(2) == 0 && gen(3) == 0 &&
                                          !(int) gen(1) && !(int) gen(2) && !(int) gen(3));
+    CHECK("with a base, a new track starts one load", g_starts[0] == 2);
+
+    /* No stems base: identity still runs on deck 1 (index 1), nothing loads. */
+    g_stems_base[0] = 0;
+    g_name[1] = "Track B";
+    ticks(3);
+    CHECK("no stems base: a load bumps the generation", gen(1) == 1);
+    CHECK("no stems base: azmod sees the new name and generation together",
+          g_publish_seen_gen[1] && g_gen_at_publish[1] == 1);
+    CHECK("no stems base: nothing is loaded", g_starts[1] == 0);
+    g_name[1] = "Track C";
+    ticks(3);
+    CHECK("no stems base: a second track bumps again", gen(1) == 2 && g_starts[1] == 0);
+    snprintf(g_stems_base, sizeof g_stems_base, "/media/usb/STEMS");
+    ticks(1);
+    CHECK("a base turns up: the loaded track's stems load", g_starts[1] == 1);
+    ticks(10);
+    CHECK("a base turns up: one load only, no new generation", g_starts[1] == 1 && gen(1) == 2);
+    g_stems_base[0] = 0;
+    g_name[1] = "";
+    ticks(EJECT_EMPTY_TICKS + 1);
+    CHECK("no stems base: an eject bumps the generation", gen(1) == 3);
+    g_name[1] = "Track C";
+    ticks(3);
+    snprintf(g_stems_base, sizeof g_stems_base, "/media/usb/STEMS");
+    ticks(2);
+    CHECK("eject and reload without a base, then a base: one load for it", g_starts[1] == 2 && gen(1) == 4);
     return ut_summary();
 }

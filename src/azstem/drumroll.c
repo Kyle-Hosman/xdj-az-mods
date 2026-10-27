@@ -673,7 +673,9 @@ static drum_grid g_drum_grid[DRUM_SIDES];
 static _Atomic int g_drum_sync_on = 0;        /* azmod owns this; power-on default off */
 static _Atomic int g_grid_demand = 0;         /* a community mod asked for beat phases */
 static _Atomic long g_drum_sync_off = 0;      /* the tunable, source samples */
+static _Atomic int g_sfx_mode;                /* stem_fx.c: Stem FX on pads 5-8 reads the grid */
 static unsigned g_drum_grid_seen[DRUM_SIDES]; /* last track generation parsed */
+static unsigned g_drum_grid_told[DRUM_SIDES]; /* last generation logged as having no grid */
 static int g_drum_grid_init = 0;
 
 /* First hit on press: 1 = fire immediately and lock from the next subdivision;
@@ -881,30 +883,35 @@ static void drum_grid_service(void) {
             g_drum_grid_seen[d] =
                 atomic_load_explicit(&g_deck_trackgen[d], memory_order_relaxed) - 1u;
     }
-    /* No work while nothing reads the grid: Beat Sync off and no community mod asking for
-     * beat phases. The track generation is deliberately not consumed then, so turning
-     * either on picks up the tracks already loaded. The grid drives Drum Roll only while
-     * Beat Sync is on (drum_sync_frames_to_next checks it first). */
+    /* No work while nothing reads the grid: Beat Sync off, no community mod asking for beat
+     * phases and the stem pads not FX pads. The track generation is deliberately not consumed
+     * then, so turning any of them on picks up the tracks already loaded. The grid drives
+     * Drum Roll only while Beat Sync is on (drum_sync_frames_to_next checks it first). */
     if (!atomic_load_explicit(&g_drum_sync_on, memory_order_relaxed) &&
-        !atomic_load_explicit(&g_grid_demand, memory_order_relaxed))
+        !atomic_load_explicit(&g_grid_demand, memory_order_relaxed) &&
+        !atomic_load_explicit(&g_sfx_mode, memory_order_relaxed))
         return;
 
     for (int d = 0; d < DRUM_SIDES && d < NDECK; d++) {
         unsigned gen = atomic_load_explicit(&g_deck_trackgen[d], memory_order_relaxed);
         if (gen == g_drum_grid_seen[d])
             continue;
-        g_drum_grid_seen[d] = gen;
         drum_grid_publish(d, 0, 0, 0.0); /* invalidate first */
 
         /* EP147's in-memory grid: microseconds, no file I/O. */
         long long anchor = 0;
         double beat = 0.0;
         if (!drum_grid_native(d, &anchor, &beat)) {
-            /* Unknown (empty, ejected or mid-load): the grid stays invalid and
-             * the deck free-runs. */
-            logln("drumsync: d%d no native grid yet -- FREE-RUNNING", d);
+            /* Unknown (empty, ejected or mid-load): the grid stays invalid and the deck
+             * free-runs. The generation stays unconsumed, so the next tick reads again: the
+             * analysis often lands after the track change that announced it. */
+            if (g_drum_grid_told[d] != gen + 1u) {
+                g_drum_grid_told[d] = gen + 1u;
+                logln("drumsync: d%d no native grid yet -- FREE-RUNNING", d);
+            }
             continue;
         }
+        g_drum_grid_seen[d] = gen;
         drum_grid_publish(d, 1, anchor, beat);
         logln("drumsync: d%d LOCKED  anchor=%lld src  beat=%.1f src (%.2f BPM)  from EP147", d,
               anchor, beat, (double) DRUM_SR * 60.0 / beat);

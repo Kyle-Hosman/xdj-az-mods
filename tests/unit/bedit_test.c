@@ -10,7 +10,10 @@
  *     the right when the title would go below BE_TITLE_MIN, EP147's widths stay when there is no
  *     room even then, the total width never changes;
  *   - a tap sorts outside edit mode; in edit mode the sub column picks a field, a fixed column
- *     toggles, anything else does nothing. */
+ *     toggles, anything else does nothing;
+ *   - the search bar narrowed: its clear button and the buttons beside it move left by the room
+ *     given up, the text editor and the inner widget shrink by it, from EP147's places or from
+ *     an earlier shift, and back; anything else, or a shift out of range, is left alone. */
 #include "check.h"
 #include <string.h>
 #include "browse_edit.h"
@@ -210,5 +213,26 @@ int main(void) {
     BCHECK(be_tap(1, 4, fixed, 5) == BE_TAP_NONE && be_tap(1, 0, fixed, 5) == BE_TAP_NONE &&
                be_tap(1, 99, fixed, 5) == BE_TAP_NONE,
            "editing, the title or no column: nothing");
+    /* ---- the search bar's children */
+    {
+        int o[4];
+        const int x0[4] = {511, 13, 25, 24}, ed0[4] = {56, 9, 448, 40}, in0[4] = {0, 0, 544, 50};
+        BCHECK(be_search_kid(x0, 118, o) && o[0] == 393 && o[1] == 13 && o[2] == 25 && o[3] == 24,
+               "search: the clear button moves left by the room given up");
+        const int x1[4] = {393, 13, 25, 24};
+        BCHECK(be_search_kid(x1, 236, o) && o[0] == 275 && o[2] == 25, "search: from one shift to two");
+        BCHECK(be_search_kid(x1, 0, o) && o[0] == 511, "search: back to EP147's place");
+        BCHECK(be_search_kid(ed0, 118, o) && o[0] == 56 && o[2] == 330 && o[3] == 40,
+               "search: the text editor loses the room, stays where it starts");
+        const int ed2[4] = {56, 9, 212, 40};
+        BCHECK(be_search_kid(ed2, 0, o) && o[2] == 448, "search: the editor back to its width");
+        BCHECK(be_search_kid(in0, 118, o) && o[0] == 0 && o[2] == 426 && o[3] == 50, "search: an inner widget shrinks");
+        const int tb[4] = {466, 0, 78, 50}, te[4] = {0, 9, 426, 40};
+        BCHECK(be_search_kid(tb, 118, o) && o[0] == 348 && o[2] == 78, "search: the track filter's button moves");
+        BCHECK(be_search_kid(te, 118, o) && o[0] == 0 && o[2] == 308, "search: the track filter's editor shrinks");
+        const int odd[4] = {510, 13, 25, 24}, odd2[4] = {511, 13, 25, 24 + 1};
+        BCHECK(!be_search_kid(odd, 118, o) && !be_search_kid(odd2, 118, o), "search: a child not at a stock place is left");
+        BCHECK(!be_search_kid(x0, 354, o) && !be_search_kid(x0, -1, o), "search: a shift out of range is refused");
+    }
     return ut_summary();
 }

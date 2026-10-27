@@ -249,6 +249,30 @@ int main(int argc, char **argv) {
         CHECK("the stick's theme / vinyl.brake kept in the deck copy", has(conf_path, "theme = forest") && has(conf_path, "vinyl.brake = 0.30"));
     }
 
+    /* ---- Remember Waveform Zoom's level is an azmod.conf key: none until one is saved */
+    {
+        char *keep = strdup(slurp(conf_path));
+        __atomic_store_n(&g_wz_saved, WZ_NONE, __ATOMIC_RELAXED);
+        save_config(&s);
+        CHECK("wave.zoom: no key while no level was ever saved", !has(conf_path, "wave.zoom"));
+        __atomic_store_n(&g_wz_saved, WZ_PACK(1, 16), __ATOMIC_RELAXED);
+        save_config(&s);
+        CHECK("wave.zoom: a saved level is written as its text", has(conf_path, "wave.zoom = 1/16\n"));
+        __atomic_store_n(&g_wz_saved, WZ_NONE, __ATOMIC_RELAXED);
+        boot(&s);
+        CHECK("wave.zoom: loaded from azmod.conf", __atomic_load_n(&g_wz_saved, __ATOMIC_RELAXED) == WZ_PACK(1, 16));
+        put(conf_path, subst(slurp(conf_path), "wave.zoom = 1/16", "wave.zoom = 2/1"));
+        boot(&s);
+        CHECK("wave.zoom: 2/1 loaded", __atomic_load_n(&g_wz_saved, __ATOMIC_RELAXED) == WZ_PACK(2, 1));
+        put(conf_path, subst(slurp(conf_path), "wave.zoom = 2/1", "wave.zoom = 1/32"));
+        boot(&s);
+        CHECK("wave.zoom: a value that is not a level loads as none",
+              __atomic_load_n(&g_wz_saved, __ATOMIC_RELAXED) == WZ_NONE);
+        put(conf_path, keep);
+        free(keep);
+        boot(&s);
+    }
+
     /* ---- migration: a conf from before the move imports the old files once, then ignores them */
     {
         char p[1100], *keep = strdup(slurp(conf_path));

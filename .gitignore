@@ -4,6 +4,8 @@ src/azmod/caption_strips.h
 src/azmod/fxart.h
 src/azmod/fxbars.h
 src/azmod/fxhdr.h
+src/azmod/holdtile.h
+src/azmod/sfxtile.h
 src/azmod/menulabels.h
 src/azmod/collabels.h
 src/azmod/onelibkey.h

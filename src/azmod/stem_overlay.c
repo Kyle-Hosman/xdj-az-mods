@@ -712,6 +712,7 @@ bool azmod_native_lanes_drawn(const azmod_state *s, int d) {
         return false;
     if (s->mode != AZ_CLOSED)
         return false;
+    /* Stem FX = FX: tiles 5-8 are Stem FX pads and keep EP147's own FX art. */
     return s->waveform_visible && azmod_stems_engine(s) && azmod_stem_native && !s->four_deck &&
-           s->stems_available[d] && s->pad_beatloop[d];
+           s->stems_available[d] && s->pad_beatloop[d] && az_get(AZF_STEM_FX) != 1;
 }

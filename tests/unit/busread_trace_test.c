@@ -35,6 +35,7 @@
 #define NEXT(p, name) ((void) 0)
 #include "bus_cfg.h"
 #include "bl_flip.h"
+#include "stem_fx_pads.h"
 #include "drag_handoff.h"
 #include "mm_resume.h"
 #include "touch_read_guard.h" /* a failed read on the touch device (not in this stream) */
@@ -83,6 +84,9 @@ static _Atomic int g_drag_committing, g_drag_into = -1, g_drag_into_dir, g_drag_
                                       g_drag_into_note, g_drag_kind, g_drag_on, g_drag_origin, g_drag_rows,
                                       g_drag_target, g_drum_arm;
 static int g_drum_held[AZMOD_STEM_DECKS];
+static int g_drum_hold[AZMOD_STEM_DECKS];
+#define DRUM_HOLD_ON 1
+#define DRUM_HOLD_SUSTAIN 2
 static volatile unsigned g_drum_sel_led[AZMOD_STEM_DECKS];
 static volatile int g_erp_active[AZMOD_STEM_DECKS];
 static long g_erp_crc_ok, g_erp_crc_bad;
@@ -143,6 +147,20 @@ static void (*g_drum_gate_fn)(int, int) = f_gate, (*g_drum_select_fn)(int, int) 
     (*g_drum_rate_fn)(int, int) = f_rate, (*g_drum_touch_fn)(int, int) = f_touch,
     (*g_drum_tone_fn)(int, int) = f_tone;
 /* clang-format on */
+/* Stem FX pads: azstem's calls are present and the mode is off, as with Stem FX = Waveforms
+ * + Solo, so the trace is the solo one (stem_fx_pads.h has its own suite). */
+static unsigned f_sfx_on(int d) {
+    printf(" C:sfx_on(%d)", d);
+    return 0;
+}
+static int f_sfx(int d, int f, int on) {
+    printf(" C:sfx(%d,%d,%d)", d, f, on);
+    return 0;
+}
+static int g_stemfx_pads;
+static unsigned (*g_sfx_on_fn)(int) = f_sfx_on;
+static int (*g_sfx_fn)(int, int, int) = f_sfx;
+static sfxp_hold g_sfxp[AZMOD_PAD_DECKS][SFXP_N];
 
 static uint8_t frame[160];
 static size_t frame_len;
@@ -252,7 +270,7 @@ int main(int argc, char **argv) {
         P(g_caption_repaint); P(g_erp_crc_ok); P(g_erp_crc_bad); P(wd_stall); P(g_src_swallow);
         P(g_last_click_bit); P(g_last_back_bit); P(g_dh.state); P(g_dh.it.op); P(g_dh.it.origin); P(g_dh.it.target); P(g_dh.it.into); P(g_dh.posted); P(g_dh.refused); P(g_dh.full);
         PA(g_pad_req, 4); PA(g_pad_solo_req, 4); PA(g_bl_enter, 2); PA(g_bl_vpage2, 4);
-        PA(g_deck_sel, 2); PA(g_drum_held, 4); PA(g_drum_sel_led, 4); PA(g_pad_mode_bl, 4);
+        PA(g_deck_sel, 2); PA(g_drum_held, 4); PA(g_drum_hold, 4); PA(g_drum_sel_led, 4); PA(g_pad_mode_bl, 4);
         PA(g_pad_mode_slip, 4); PA(g_mode_down, 2); PA(g_mode_edge_ms, 2); PA(g_mode_edge_seq, 2);
         PA(g_stemeq_knobs, 2); PA(g_erp_last, 4); PA(g_erp_last8, 4); PA(g_dbg_reqraised, 4);
         /* clang-format on */

@@ -357,6 +357,89 @@ static void starttimer_hook(long self, int ms) {
     }
     g_orig_starttimer(self, ms);
 }
+/* ---- Position feed lock: LocalPlayer ticks once per displayed frame -------
+ * gui::player_info::LocalPlayer::timerCallback (vtable slot 2) samples the
+ * deck's playhead for the waveform. On its own juce::Timer it free-runs at
+ * 62.5/s against the 59.24 Hz frame clock, so every few frames the waveform
+ * moves two steps or none. While 60 FPS Waveforms is live, its own tick only
+ * records the instance, and the frame's refresh path (disprefresh_hook, same
+ * message thread, before the waveform is dirtied) runs the original once per
+ * frame. The feed samples the playhead, so a per-frame call moves the waveform
+ * by elapsed time, not by a fixed step.
+ *
+ * Entries are validated (alignment, exact vtable) at every use and zeroed when
+ * invalid. An entry whose own timer has not ticked for FEED_IDLE_MAX frames is
+ * dropped, so a stopped feed stays stopped. If frames stop running it, its own
+ * tick runs the original again after FEED_OWN_MAX ticks, so the feed never
+ * stalls. Lock off: the original runs from its own timer and the table is
+ * unused. Kill switch: settings/azmod-feedlock.off (read once at install). */
+#define LOCALPLAYER_TIMERCB EP_1e27d28
+#define FEED_MAX 8
+#define FEED_OWN_MAX 3  /* own ticks without a frame run before passing through */
+#define FEED_IDLE_MAX 8 /* frame runs without an own tick before the entry is dropped */
+static void (*g_orig_lptick)(long);
+static int g_feedlock_ok = 1; /* cleared by settings/azmod-feedlock.off at install */
+static struct {
+    _Atomic long self;
+    _Atomic int own;  /* own-timer ticks since the last frame run */
+    _Atomic int idle; /* frame runs since the last own-timer tick */
+} g_feed[FEED_MAX];
+static _Atomic long g_feed_frame_n = 0, g_feed_pass_n = 0; /* diagnostics */
+static int feedlock_on(void) {
+    return g_feedlock_ok && __atomic_load_n(&g_ui60_on, __ATOMIC_RELAXED) &&
+           __atomic_load_n(&g_wave60_on, __ATOMIC_RELAXED) &&
+           __atomic_load_n(&g_disp60_armed, __ATOMIC_RELAXED);
+}
+static int feed_valid(long p) {
+    return p > 0x10000 && (p & 7) == 0 && *(uintptr_t *) p == LOCALPLAYER_VT;
+}
+static void lptick_hook(long self) {
+    if (!feedlock_on() || !feed_valid(self)) {
+        g_orig_lptick(self);
+        return;
+    }
+    int i, freei = -1;
+    for (i = 0; i < FEED_MAX; i++) {
+        long p = __atomic_load_n(&g_feed[i].self, __ATOMIC_RELAXED);
+        if (p == self)
+            break;
+        if (!p && freei < 0)
+            freei = i;
+    }
+    if (i == FEED_MAX) {
+        if (freei < 0) { /* table full: this instance keeps its own timer */
+            g_orig_lptick(self);
+            return;
+        }
+        i = freei;
+        __atomic_store_n(&g_feed[i].own, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_feed[i].self, self, __ATOMIC_RELAXED);
+    }
+    __atomic_store_n(&g_feed[i].idle, 0, __ATOMIC_RELAXED);
+    if (__atomic_add_fetch(&g_feed[i].own, 1, __ATOMIC_RELAXED) >= FEED_OWN_MAX) {
+        __atomic_store_n(&g_feed[i].own, 0, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&g_feed_pass_n, 1, __ATOMIC_RELAXED);
+        g_orig_lptick(self); /* no frame has run it lately */
+    }
+}
+/* Once per frame, from disprefresh_hook. Never calls startTimer. */
+static void feed_run_frame(void) {
+    void (*orig)(long) = __atomic_load_n(&g_orig_lptick, __ATOMIC_ACQUIRE);
+    if (!feedlock_on() || !orig)
+        return;
+    for (int i = 0; i < FEED_MAX; i++) {
+        long p = __atomic_load_n(&g_feed[i].self, __ATOMIC_RELAXED);
+        if (!p)
+            continue;
+        if (!feed_valid(p) || __atomic_add_fetch(&g_feed[i].idle, 1, __ATOMIC_RELAXED) > FEED_IDLE_MAX) {
+            __atomic_store_n(&g_feed[i].self, 0, __ATOMIC_RELAXED);
+            continue;
+        }
+        __atomic_store_n(&g_feed[i].own, 0, __ATOMIC_RELAXED);
+        orig(p);
+    }
+    __atomic_fetch_add(&g_feed_frame_n, 1, __ATOMIC_RELAXED);
+}
 /* ---- The waveform limiter: gui::DisplayRefreshCycleTimer -----------------
  * vtable 0x29c98c0, timerCallback 0x1987038. Dirties the waveform rect
  * 170,89,900x162 at 32/s, which caps WaveformView::paint.
@@ -443,6 +526,7 @@ static void disprefresh_hook(long self) {
         }
         g_disp_btn = k;
     }
+    feed_run_frame(); /* the position first, then the waveform is dirtied */
     g_orig_disprefresh(self);
 }
 #define UI60_SITE EP_24fac4c

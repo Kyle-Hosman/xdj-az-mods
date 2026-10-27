@@ -38,6 +38,40 @@ static volatile unsigned g_pad_req[AZMOD_STEM_DECKS] = {
     0}; /* pads 1..4: bits 0..3 pending stem mute toggle */
 static volatile unsigned g_pad_solo_req[AZMOD_STEM_DECKS] = {
     0}; /* pads 5..8: bits 0..3 pending stem solo */
+/* Stem FX pads (stem_fx_pads.h): the overlay sets the mode and resolves azstem's two calls;
+ * the presses in flight belong to this thread. */
+static int g_stemfx_pads;                      /* __atomic: 1 = pads 5-8 are FX pads */
+static unsigned (*g_sfx_on_fn)(int deck);      /* azstem_stem_fx_on, __atomic */
+static int (*g_sfx_fn)(int deck, int fx, int on); /* azstem_stem_fx, __atomic */
+static sfxp_hold g_sfxp[AZMOD_PAD_DECKS][SFXP_N];
+#ifdef AZMOD_PROBES
+/* Development builds: every Stem FX pad decision into a ring the overlay drains to
+ * /tmp/azmod-stemfx.log while /home/root/settings/azmod-stemfx.log exists. One word each:
+ * kind(8) | deck(8) | fx(8) | value(8). Kinds: 'F' a frame with a rise or a hold (value = rise
+ * << 4 | down), 'P' press answer, 'R' release sent, 'O' on bits read. */
+static unsigned g_sfxlog[256];
+static unsigned g_sfxlog_w, g_sfxlog_r; /* w: bus thread (__atomic), r: overlay thread */
+static void sfxlog(int kind, int deck, int fx, unsigned v) {
+    unsigned w = __atomic_load_n(&g_sfxlog_w, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_sfxlog[w & 255u],
+                     (unsigned) kind << 24 | (unsigned) (deck & 0xff) << 16 |
+                         (unsigned) (fx & 0xff) << 8 | (v & 0xffu),
+                     __ATOMIC_RELAXED);
+    __atomic_store_n(&g_sfxlog_w, w + 1, __ATOMIC_RELEASE);
+}
+static unsigned sfx_on_logged(int deck) {
+    unsigned (*f)(int) = __atomic_load_n(&g_sfx_on_fn, __ATOMIC_ACQUIRE);
+    unsigned v = f ? f(deck) : 0;
+    sfxlog('O', deck, 0, v);
+    return v;
+}
+static int sfx_fx_logged(int deck, int fx, int on) {
+    int (*f)(int, int, int) = __atomic_load_n(&g_sfx_fn, __ATOMIC_ACQUIRE);
+    int r = f ? f(deck, fx, on) : 0;
+    sfxlog(on ? 'P' : 'R', deck, fx, (unsigned) r);
+    return r;
+}
+#endif
 static unsigned g_erp_last8[AZMOD_STEM_DECKS] = {
     0}; /* interposer-only: last all-8 pad bits (edge) */
 static int g_gpiodrv_fds[MAX_GPIODRV_FDS];
@@ -276,6 +310,21 @@ ssize_t recvmsg(int fd, struct msghdr *msg, int flags) {
     return r;
 }
 
+/* Drum roll pads 5-7 on an armed deck, in the LED frame's pad bank (4 bytes per pad, {R,G,B}
+ * linear light): pads 5 and 6 dark (no function); pad 7 HOLD off dim blue, HOLD on flashing
+ * blue, full and dark on the blink phase. */
+static void drum_hold_led(unsigned char *pb, int hold_state, int blink_on) {
+    for (int i = 4; i < 6; i++) {
+        pb[i * 4 + 0] = 0x00;
+        pb[i * 4 + 1] = 0x00;
+        pb[i * 4 + 2] = 0x00;
+    }
+    unsigned char *px = pb + 6 * 4;
+    px[0] = 0x00;
+    px[1] = 0x00;
+    px[2] = (hold_state & DRUM_HOLD_ON) ? (blink_on ? 0xFF : 0x00) : 0x22;
+}
+
 /* SUBUCOM message ioctl. On the ErP fd it rewrites the outgoing 128-byte LED
  * frame (pad-mode colors, drum roll pads, stem pads, Beat Loop button, community
  * mod edits) and re-stamps its CRC over [0:0x78]. The 16-byte arg is a descriptor
@@ -454,12 +503,10 @@ int ioctl(int fd, unsigned long req, ...) {
                         }
                         pb[i * 4 + 2] = 0x00;
                     }
-                    /* Pads 5-7 dark while armed: the read() path swallows their
-                     * slip-loop actions, so lit pads would advertise dead controls.
-                     * Unarmed they are left alone. */
+                    /* Armed: pads 5 and 6 dark, pad 7 is HOLD (drum_hold_led,
+                     * drum_hold_pads). Unarmed they are left alone. */
                     if (on)
-                        for (int i = 4; i < 7; i++)
-                            pb[i * 4 + 0] = pb[i * 4 + 1] = pb[i * 4 + 2] = 0x00;
+                        drum_hold_led(pb, __atomic_load_n(&g_drum_hold[ld], __ATOMIC_RELAXED), blink_on);
                     pb[7 * 4 + 0] = on ? 0x00 : 0xFF; /* pad 8: green on, red off */
                     pb[7 * 4 + 1] = on ? 0xFF : 0x00;
                     pb[7 * 4 + 2] = 0x00;
@@ -909,6 +956,53 @@ static void mixer_reorder_gesture(uint8_t *mb, int delta) {
     }
 }
 
+/* ---- Drum roll HOLD (pad 7) -----------------------------------------------------
+ * Per logical deck, in g_drum_hold: DRUM_HOLD_ON while the hold is on, plus
+ * DRUM_HOLD_SUSTAIN once the X-PAD has played the roll under it. A sustained roll keeps
+ * sounding after the finger leaves the strip, at the rate latched from the last touched
+ * frame. The ErP reader turns the hold on and off (drum_hold_pads); the mixer reader only
+ * adds SUSTAIN, with a compare-and-swap, so it can never revive a hold the ErP reader has
+ * just cleared. The two bits are defined in azmod_internal.h. */
+
+/* ErP reader. Pad 7 rising on an armed deck toggles its hold; pads 5 and 6 do nothing. A hold
+ * belongs to the deck: it is cleared when the deck is not armed, and when this pad set moves
+ * to another deck (on the deck it drove before). Returns a bit per deck whose hold changed. */
+static unsigned drum_hold_pads(int d, int ld, int armed, unsigned rise8) {
+    static int last_ld[AZMOD_PAD_DECKS] = {-1, -1};
+    if (d < 0 || d >= AZMOD_PAD_DECKS || ld < 0 || ld >= AZMOD_STEM_DECKS)
+        return 0;
+    unsigned changed = 0;
+    const int prev = last_ld[d];
+    last_ld[d] = ld;
+    if (prev >= 0 && prev != ld && __atomic_exchange_n(&g_drum_hold[prev], 0, __ATOMIC_RELAXED))
+        changed |= 1u << prev;
+    if (!armed) {
+        if (__atomic_exchange_n(&g_drum_hold[ld], 0, __ATOMIC_RELAXED))
+            changed |= 1u << ld;
+    } else if (rise8 & 0x40u) {
+        if (!__atomic_exchange_n(&g_drum_hold[ld], 0, __ATOMIC_RELAXED))
+            __atomic_store_n(&g_drum_hold[ld], DRUM_HOLD_ON, __ATOMIC_RELAXED);
+        changed |= 1u << ld;
+    }
+    return changed;
+}
+
+/* Mixer reader: the touch to report for an armed deck. The strip touched under a hold
+ * sustains the roll; a sustained roll sounds with the finger up. A hold alone, with no roll
+ * played under it, never starts one. */
+static int drum_hold_touch(int ld, int touched) {
+    if (ld < 0 || ld >= AZMOD_STEM_DECKS)
+        return touched;
+    int h = __atomic_load_n(&g_drum_hold[ld], __ATOMIC_RELAXED);
+    if (touched) {
+        if (h == DRUM_HOLD_ON)
+            __atomic_compare_exchange_n(&g_drum_hold[ld], &h, DRUM_HOLD_ON | DRUM_HOLD_SUSTAIN, 0,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+        return 1;
+    }
+    return h == (DRUM_HOLD_ON | DRUM_HOLD_SUSTAIN);
+}
+
 /* ---- Mixer bus: x-pad drum roll -------------------------------------------------
  * Map the strip byte to one of six roll rates. Only with the mod enabled; the strip bytes
  * themselves are never modified. There is one strip, so the rate goes to whichever logical
@@ -920,6 +1014,10 @@ static void mixer_reorder_gesture(uint8_t *mb, int delta) {
  * buttons above the screen for as long as drum roll is armed, and clearing 0x54 on touched
  * frames does not stop the FX from engaging. Do not write these bytes. The DJ turns the FX
  * knob down for a dry roll, or layers FX over it. */
+/* The X-PAD touched in the last mixer frame (__atomic). The ErP reader reads it to end a held
+ * roll whose HOLD went off while no finger is down (erp_drum_hold). */
+static int g_xpad_finger;
+
 static void mixer_xpad_drum(uint8_t *b, ssize_t r, uint64_t cfg) {
     struct bus_xpad xp; /* the x-pad bytes, one combination (azmod-xpad is read field by field) */
     bus_cfg_xpad(cfg, &xp);
@@ -934,6 +1032,7 @@ static void mixer_xpad_drum(uint8_t *b, ssize_t r, uint64_t cfg) {
                   : xp.touch >= 0 && xp.touch < (int) r ? (b[xp.touch] & xp.mask) != 0
                                                         : raw != 0;
     __atomic_store_n(&g_xpad_raw, (int) raw, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_xpad_finger, touched, __ATOMIC_RELAXED);
     unsigned span = (unsigned) xp.span; /* 7-bit strip: 0..124 */
     if (raw >= span)
         raw = span - 1;
@@ -947,10 +1046,22 @@ static void mixer_xpad_drum(uint8_t *b, ssize_t r, uint64_t cfg) {
         if (!__atomic_load_n(&g_drum_held[ld], __ATOMIC_RELAXED))
             continue;
         any_held = 1;
-        if (rate_fn)
+        /* The rate follows the finger only while it is on the strip. With no finger the
+         * panel reports the position byte as 0xFF, which reads as the fastest zone, so an
+         * untouched frame never sets the rate: the last touched zone stays latched. */
+        if (rate_fn && touched)
             rate_fn(ld, idx);
-        if (touch_fn)
-            touch_fn(ld, touched);
+        if (touch_fn) {
+            const int on = drum_hold_touch(ld, touched);
+            touch_fn(ld, on);
+            /* A sustained roll reported while the ErP reader turns HOLD off: look again after
+             * the report, so whichever reader reports last reports the end (erp_drum_hold). */
+            if (on && !touched) {
+                __atomic_thread_fence(__ATOMIC_SEQ_CST);
+                if (!drum_hold_touch(ld, 0))
+                    touch_fn(ld, 0);
+            }
+        }
     }
     /* the row art follows the finger: zone while touched, idle strip when not
      * (fxrow_apply_tick turns this into a strip index, change-only) */
@@ -1313,6 +1424,42 @@ static void erp_mode_edges(const uint8_t *eb, int d, int mode_off) {
     __atomic_store_n(&g_mode_down[d], lvl != 0, __ATOMIC_RELAXED);
 }
 
+/* Pad 7 HOLD for one pad set, every ErP frame whatever the pad mode. Only a drum roll pad set
+ * (drum) can toggle it. Another pad mode keeps it, so a held roll plays on under the other pads
+ * and pad 7 stops it on the way back; a deck select or a disarm (which the mod off is) clears
+ * it. The mixer reader turns the hold into the roll's touch. */
+static void erp_drum_hold(int d, int ld, int drum, unsigned rise8) {
+    if (ld < 0 || ld >= AZMOD_STEM_DECKS)
+        return;
+    const int held = __atomic_load_n(&g_drum_held[ld], __ATOMIC_RELAXED);
+    const unsigned hc = drum_hold_pads(d, ld, held, drum ? rise8 : 0u);
+    if (!hc)
+        return;
+    /* The ErP and mixer buses are event-driven: with no finger on the X-PAD no mixer frame
+     * follows, and the mixer reader would report the end of a held roll only at the next
+     * touch. A hold that went off on an armed deck ends its roll here; the mixer reader looks
+     * again after its own report, so the end is never lost to a frame in flight. */
+    void (*touch_fn)(int, int) = __atomic_load_n(&g_drum_touch_fn, __ATOMIC_ACQUIRE);
+    if (touch_fn && !__atomic_load_n(&g_xpad_finger, __ATOMIC_RELAXED)) {
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        for (int k = 0; k < AZMOD_STEM_DECKS; k++)
+            if ((hc & (1u << k)) && __atomic_load_n(&g_drum_held[k], __ATOMIC_RELAXED) &&
+                !__atomic_load_n(&g_drum_hold[k], __ATOMIC_RELAXED))
+                touch_fn(k, 0);
+    }
+    static int hlog = 40; /* __atomic builtins only */
+    if (__atomic_fetch_sub(&hlog, 1, __ATOMIC_RELAXED) <= 0)
+        return;
+    FILE *f = azlog_open("/tmp/azmod-drumtile.log", "a");
+    if (!f)
+        return;
+    for (int k = 0; k < AZMOD_STEM_DECKS; k++)
+        if (hc & (1u << k))
+            fprintf(f, "HOLD ld=%d hold=%d (side %d on ld=%d)\n", k,
+                    __atomic_load_n(&g_drum_hold[k], __ATOMIC_RELAXED), d, ld);
+    fclose(f);
+}
+
 /* Drum roll: the mod enabled and SLIP LOOP. Pad 8 arms the instrument and pads 1-4 pick the
  * sample, swallowed so the native slip-loop actions never fire underneath. */
 static void erp_pads_drum_roll(uint8_t *eb, int d, int ld, int off, int mode_off,
@@ -1355,8 +1502,8 @@ static void erp_pads_drum_roll(uint8_t *eb, int d, int ld, int off, int mode_off
         if (select)
             select(ld, sel);
     }
-    /* Pad 8 always (the arm toggle); pads 1-7 only while this deck is armed, the same
-     * condition the LEDs use, so unarmed pads never look stock and do nothing. Because pad 8
+    /* Pad 8 always (the arm toggle); pads 1-7 (samples, HOLD, and the inert 5 and 6) only while
+     * this deck is armed, the same condition the LEDs use, so unarmed pads never look stock and do nothing. Because pad 8
      * never reaches EP147, its DRUM ROLL tile never draws its pressed art. Passing the bit
      * through is not an option: EP147 would fire its own 3/4 slip loop on it. The armed state
      * is shown by the FX panel overlay (d56vis) instead. */
@@ -1372,12 +1519,12 @@ static void erp_pads_drum_roll(uint8_t *eb, int d, int ld, int off, int mode_off
  * Drum Roll mod is set to: drum roll owns pad 8 only in SLIP LOOP, which is decided before
  * this. Do not gate this on g_drum_arm. */
 static void erp_pads_stems(uint8_t *eb, int ld, int off, unsigned padbits, unsigned rise8,
-                           int crc_in) {
+                           int fxpads, int crc_in) {
     if (rise8 & 0x0Fu) {
         g_dbg_reqraised[ld] |= rise8 & 0x0Fu;
         __atomic_or_fetch(&g_pad_req[ld], rise8 & 0x0Fu, __ATOMIC_ACQ_REL);
     }
-    unsigned solo8 = rise8 & 0xF0u;
+    unsigned solo8 = fxpads ? 0u : rise8 & 0xF0u; /* FX pads: erp_side hands 5-8 to sfxp_frame */
     if (solo8)
         __atomic_or_fetch(&g_pad_solo_req[ld], (solo8 >> 4) & 0x0Fu, __ATOMIC_ACQ_REL);
     if (padbits && crc_in) {
@@ -1408,10 +1555,54 @@ static void erp_side(uint8_t *eb, int d, int crc_in) {
     g_dbg_padbits[d] = padbits;
     /* Pads belong to drum roll in SLIP LOOP with the mod on, to stems when stems are engaged
      * and this deck shows the stems page; every other pad mode stays native. */
-    if (__atomic_load_n(&g_drum_arm, __ATOMIC_RELAXED) && drum_mode_is_slip(d, ld))
+#ifdef AZMOD_PROBES
+    {
+        static unsigned last_hi[AZMOD_PAD_DECKS];
+        if (((padbits ^ last_hi[d]) & 0xF0u) != 0) {
+            last_hi[d] = padbits;
+            int dr = __atomic_load_n(&g_drum_arm, __ATOMIC_RELAXED) && drum_mode_is_slip(d, ld);
+            int act = ld >= 0 && ld < AZMOD_STEM_DECKS && __atomic_load_n(&g_erp_active[ld], __ATOMIC_RELAXED);
+            int sp = act && stems_page(d, ld);
+            int fm = __atomic_load_n(&g_stemfx_pads, __ATOMIC_RELAXED);
+            sfxlog('B', ld, d, (padbits & 0xF0u) | (unsigned) (dr << 3 | act << 2 | sp << 1 | fm));
+        }
+    }
+#endif
+    unsigned (*fx_on)(int) = __atomic_load_n(&g_sfx_on_fn, __ATOMIC_ACQUIRE);
+    int (*fx)(int, int, int) = __atomic_load_n(&g_sfx_fn, __ATOMIC_ACQUIRE);
+    int fxpads = fx_on && fx && __atomic_load_n(&g_stemfx_pads, __ATOMIC_RELAXED);
+    unsigned fxrise = 0;
+    const int drum = __atomic_load_n(&g_drum_arm, __ATOMIC_RELAXED) && drum_mode_is_slip(d, ld);
+    erp_drum_hold(d, ld, drum, rise8);
+    if (drum)
         erp_pads_drum_roll(eb, d, ld, off, mode_off, padbits, rise8, crc_in);
-    else if (__atomic_load_n(&g_erp_active[ld], __ATOMIC_RELAXED) && stems_page(d, ld))
-        erp_pads_stems(eb, ld, off, padbits, rise8, crc_in);
+    else if (__atomic_load_n(&g_erp_active[ld], __ATOMIC_RELAXED) && stems_page(d, ld)) {
+        erp_pads_stems(eb, ld, off, padbits, rise8, fxpads, crc_in);
+        if (fxpads)
+            fxrise = (rise8 >> 4) & 0x0Fu;
+    }
+    /* Every frame, whatever the pads do now: a held FX pad's release must reach the effect it
+     * started. The clock is read only while a press is new or held. */
+    if (fx_on && fx) {
+        static int init;
+        if (!init) {
+            for (int s = 0; s < AZMOD_PAD_DECKS; s++)
+                sfxp_init(g_sfxp[s]);
+            init = 1;
+        }
+        int held = 0;
+        for (int f = 0; f < SFXP_N; f++)
+            held |= g_sfxp[d][f].ld >= 0;
+        if (fxrise || held) {
+#ifdef AZMOD_PROBES
+            sfxlog('F', ld, d, fxrise << 4 | ((padbits >> 4) & 0x0Fu));
+            fx_on = sfx_on_logged;
+            fx = sfx_fx_logged;
+#endif
+            sfxp_frame(g_sfxp[d], ld < AZMOD_STEM_DECKS ? ld : -1, fxrise, (padbits >> 4) & 0x0Fu,
+                       (long long) now_ms(), fx_on, fx);
+        }
+    }
 }
 
 /* The ErP input frame: 28 bytes + CRC-16/X25 at 28/29. Byte 24 (0x18) is the event marker
