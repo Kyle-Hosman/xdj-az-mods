@@ -123,8 +123,14 @@ your music. Tracks without stems play as normal.
 <p align="center"><img src="images/stems.png" width="520" alt="Stems pad page"></p>
 
 Tracks and playlists that have stems show a small stem mark in the track
-lists, so you can see at a glance what is ready. It can be turned off under
-**Stems** in the Mod Menu.
+lists, so you can see at a glance what is ready. The marks come in **Color** or
+**Mono**, and can be turned off under **Stems** in the Mod Menu.
+
+**Stem FX** puts four effects on pads 5-8 of the stems page: **vocal echo**,
+**instrument echo**, **instrument brake** and **drums echo**. Tap a pad to
+latch the effect, or hold it for as long as you want it. Echo and brake
+lengths follow the deck's beat grid. Turn it on under **Stems > Bottom Stem
+Pads > FX**.
 
 ### Remote Stems
 
@@ -167,7 +173,12 @@ rekordbox. Turn it on under **Playlist Editing** in the Mod Menu.
 A sample roll instrument on the X-PAD. In SLIP LOOP mode, **pad 8** arms it
 (red off, green on). Pads 1-4 pick **kick · snare · clap · hi-hat**. The six
 X-PAD zones set the rate, **1 to 1/32** of a beat, locked to the deck's BPM.
-Four banks of your own samples.
+Four banks of your own samples. It plays on a stopped deck too, and an empty
+deck rolls at the master deck's BPM.
+
+**Pad 7** is **HOLD**: with it on, the roll keeps going after you lift your
+finger from the X-PAD, at the last rate you touched. Touch another zone to
+change the rate, and press pad 7 again to stop it.
 
 The **MIC 2** EQ knobs shape the roll on both decks. **HI** is the volume:
 12 o'clock is the normal level, turn left to fade it out or right for up to
@@ -210,6 +221,14 @@ Smaller tweaks, each with its own switch in the Mod Menu (most of them under
 | **Remember Selected Channel** | Your Bluetooth channel is set again when a device connects |
 | **Pad Colors** | Your own color for each pad-mode button (HOT CUE, BEAT LOOP, SLIP LOOP, BEAT JUMP) |
 | **Overlays** | Small readouts on the deck screen: FPS, CPU use and clock, RAM and temperature |
+| **Clock** | A clock in the status bar, with optional seconds. Tap it for a countdown timer |
+| **Key in Track Title** | Each deck's key at the end of its track title. Tap it for key shift |
+| **Camelot Keys** | Keys shown in Camelot notation in the track lists and the deck info |
+| **Preview Hot Cues** | Hot cue marks on the track list's waveform previews |
+| **Extended Lead-In** | Spin a track back up to 5 minutes before its start; BEAT JUMP back runs into it |
+| **Column Edit** | Resize the Browse track list columns and put any library field in a column |
+| **Hide Column** | Hide a column in the Browse track lists |
+| **Remember Waveform Zoom** | The waveform zoom is kept over a restart |
 
 I have tons of other ideas for more mods. This is only the beginning!
 
