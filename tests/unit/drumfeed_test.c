@@ -27,5 +27,15 @@ int main(void) {
     CHECK("loaded track, BPM 0 -> 0, not the master's", drum_feed_bpm(0, 0.0, 1, 1, 126.0) == 0.0f);
     CHECK("loaded track, BPM 450 -> 0, not the master's", drum_feed_bpm(0, 450.0, 1, 1, 126.0) == 0.0f);
     CHECK("BPM 20 is out of range -> 0", drum_feed_bpm(0, 20.0, -1, 0, 0.0) == 0.0f);
+    /* drum_feed_lead: whose grid places the roll (azstem_drum_follow) */
+    CHECK("lead: a loaded deck follows itself", drum_feed_lead(0, 128.0, 1, 1, 126.0) == -1);
+    CHECK("lead: a loaded deck with an out-of-range BPM follows itself",
+          drum_feed_lead(0, 450.0, 1, 1, 126.0) == -1);
+    CHECK("lead: empty deck 1 follows master deck 2", drum_feed_lead(0, E, 1, 1, 126.0) == 1);
+    CHECK("lead: empty deck 4 follows master deck 1", drum_feed_lead(3, E, 0, 1, 93.5) == 0);
+    CHECK("lead: no known master -> itself", drum_feed_lead(0, E, -1, 0, 0.0) == -1);
+    CHECK("lead: master unreadable -> itself", drum_feed_lead(0, E, 1, 0, 126.0) == -1);
+    CHECK("lead: master ejected too -> itself", drum_feed_lead(0, E, 1, 1, E) == -1);
+    CHECK("lead: the master is this empty deck -> itself", drum_feed_lead(2, E, 2, 1, E) == -1);
     return ut_summary();
 }

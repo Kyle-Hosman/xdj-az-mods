@@ -1357,6 +1357,8 @@ static void ov_resolve_drum_exports(void) {
     *(void **) &g_drum_bank_fn = dlsym(RTLD_DEFAULT, "azstem_drum_bank");
     *(void **) &g_drum_avail_fn = dlsym(RTLD_DEFAULT, "azstem_drum_available");
     *(void **) &g_drum_bpm_fn = dlsym(RTLD_DEFAULT, "azstem_drum_bpm");
+    /* absent in older azstem: an empty deck rolls at the master's BPM, off its beat */
+    *(void **) &g_drum_follow_fn = dlsym(RTLD_DEFAULT, "azstem_drum_follow");
     *(void **) &g_drum_sync_fn = dlsym(RTLD_DEFAULT, "azstem_drum_sync");
     __atomic_store_n((void **) &g_drum_tone_fn,
                      dlsym(RTLD_DEFAULT, "azstem_drum_tone"), /* read by the bus */
@@ -1465,9 +1467,12 @@ static void ov_feed_drum_bpm(void) {
      *    so a torn-down BpmState reads as unknown, never as freed memory.
      *  - EP147 spells "no track" as DBL_MAX here, which would overflow azstem's 16.16
      *    fixed point. drum_feed_bpm sends an empty deck the MASTER deck's BPM, and
-     *    anything else outside 20..400 BPM as 0.0f, drumroll.c's "unknown" (120). */
+     *    anything else outside 20..400 BPM as 0.0f, drumroll.c's "unknown" (120).
+     *  - The same empty deck is told to follow the master (drum_feed_lead): its roll is then
+     *    placed on the master's beat grid, at the master's playhead. */
     static unsigned btk = 0;
     static float last_bpm[AZMOD_STEM_DECKS] = {0};
+    static int last_lead[AZMOD_STEM_DECKS] = {[0 ... AZMOD_STEM_DECKS - 1] = -1};
     if (g_drum_bpm_fn && (btk++ & 7u) == 0) {
         double live[AZMOD_STEM_DECKS];
         int ok[AZMOD_STEM_DECKS] = {0};
@@ -1479,6 +1484,19 @@ static void ov_feed_drum_bpm(void) {
             if (!ok[d])
                 continue;
             float bpm = drum_feed_bpm(d, live[d], m, m_ok, m_ok ? live[m] : 0.0);
+            int lead = drum_feed_lead(d, live[d], m, m_ok, m_ok ? live[m] : 0.0);
+            if (g_drum_follow_fn && lead != last_lead[d]) {
+                last_lead[d] = lead;
+                g_drum_follow_fn(d, lead);
+                FILE *lf = azlog_open("/tmp/azmod-drumbpm.log", "a");
+                if (lf) {
+                    if (lead < 0)
+                        fprintf(lf, "follow: deck%d -> its own grid\n", d + 1);
+                    else
+                        fprintf(lf, "follow: deck%d -> deck%d (master)\n", d + 1, lead + 1);
+                    fclose(lf);
+                }
+            }
             if (bpm != last_bpm[d]) {
                 last_bpm[d] = bpm;
                 g_drum_bpm_fn(d, bpm);

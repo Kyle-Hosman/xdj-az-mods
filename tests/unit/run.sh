@@ -1133,12 +1133,15 @@ done
 suite "strip neutral" "$d/real"
 # ---------------------------------------------------------------- drum feed (master BPM)
 d="$OUT/drumfeed"; mkdir -p "$d"
-extract guest/azmod/stems_display.c '^static float drum_feed_bpm\(' > "$d/real.inc"
+{ extract guest/azmod/stems_display.c '^static float drum_feed_bpm\('
+  extract guest/azmod/stems_display.c '^static int drum_feed_lead\('; } > "$d/real.inc"
+grep -q 'static int drum_feed_lead' "$d/real.inc" || { echo "extraction of drum_feed_lead failed"; exit 2; }
 grep -q 'DBL_MAX' "$d/real.inc" || { echo "extraction of drum_feed_bpm failed"; exit 2; }
 mutate "$d/real.inc" "$d/ctl-nomaster.inc" 's/if \(live != DBL_MAX \|\|/if (1 ||/'                 # empty deck never takes the master
 mutate "$d/real.inc" "$d/ctl-anyunknown.inc" 's/live != DBL_MAX \|\| //'                         # any unknown BPM takes the master's
 mutate "$d/real.inc" "$d/ctl-trust.inc" 's/master < 0 \|\| (.*?) \|\| !master_ok/$1/'          # unknown / unreadable master trusted
-for v in real ctl-nomaster ctl-anyunknown ctl-trust; do
+mutate "$d/real.inc" "$d/ctl-leadany.inc" 's/if \(live != DBL_MAX \|\| master == d\)/if (master == d)/'   # a loaded deck follows the master
+for v in real ctl-nomaster ctl-anyunknown ctl-trust ctl-leadany; do
     $CC "${CFLAGS[@]}" -I$T -DFEED_INC="\"$d/$v.inc\"" -o "$d/$v" $T/drumfeed_test.c
 done
 suite "drum feed" "$d/real"
@@ -1978,7 +1981,11 @@ mutate "$d/real.c" "$d/ctl-hitage.c" 's/            if \(age \+ tonext < period 
 mutate "$d/real.c" "$d/ctl-glide.c" 's/sm_gain\[DRUM_SIDES\] = \{1\.f, 1\.f, 1\.f, 1\.f\}/sm_gain[DRUM_SIDES] = {1.f, 1.f}/'
 # control 13: the loaded bank reloaded at every stick discovery, Drum Roll on or off
 mutate "$d/real.c" "$d/ctl-bank0.c" 's/int req = atomic_load_explicit\(&g_drum_req_bank, memory_order_relaxed\);/int req = atomic_load_explicit(\&g_drum_bank, memory_order_relaxed);/'
-for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0; do
+# control 14: an empty deck never follows the master (its roll free-runs, off the master's beat)
+mutate "$d/real.c" "$d/ctl-nofollow.c" 's/if \(lead >= 0 && lead < DRUM_SIDES && lead != side\) \{/if (0) {/'
+# control 15: a follower judged by its own playhead (an empty deck never moves: no lock)
+mutate "$d/real.c" "$d/ctl-ownmoving.c" 's/\n\s*moving = atomic_load_explicit\(&g_drum_moving_pub\[lead\], memory_order_relaxed\);//'
+for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0 ctl-nofollow ctl-ownmoving; do
     $CC "${CFLAGS[@]}" -Wno-unused-parameter -I$T -Iguest/azstem -DDRUM_INC="\"$d/$v.c\"" -o "$d/$v" $T/drumroll_test.c -lpthread -lm
 done
 suite "drumroll" "$d/real" "$d/scratch"
@@ -4048,6 +4055,7 @@ control "strip neutral: white strokes left white"     "$OUT/stripneutral/ctl-off
 control "drum feed: an empty deck never takes the master's BPM" "$OUT/drumfeed/ctl-nomaster"
 control "drum feed: any unknown BPM takes the master's"     "$OUT/drumfeed/ctl-anyunknown"
 control "drum feed: an unknown or unreadable master trusted" "$OUT/drumfeed/ctl-trust"
+control "drum feed: a loaded deck follows the master's grid"  "$OUT/drumfeed/ctl-leadany"
 control "bpmstate: the use count never read (a disposed BpmState trusted)" "$OUT/bpmstate/ctl-nouse"
 control "bpmstate: no weak reference taken (the block can be freed)"     "$OUT/bpmstate/ctl-noweak"
 control "bpmstate: the control block's vtable not checked"               "$OUT/bpmstate/ctl-novt"
@@ -4274,6 +4282,8 @@ control "drumroll: Beat Sync trusted on a stopped deck"  "$OUT/drum/ctl-stall" "
 control "drumroll: Beat Sync never used"                 "$OUT/drum/ctl-nosync" "$OUT/drum/scratch"
 control "drumroll: grid rate assumed to be 44.1 kHz"     "$OUT/drum/ctl-norate" "$OUT/drum/scratch"
 control "drumroll: grid rate never checked"              "$OUT/drum/ctl-anyrate" "$OUT/drum/scratch"
+control "drumroll: an empty deck never follows the master" "$OUT/drum/ctl-nofollow" "$OUT/drum/scratch"
+control "drumroll: a follower judged by its own playhead"  "$OUT/drum/ctl-ownmoving" "$OUT/drum/scratch"
 control "ogg decode: resample failure -> native buffer"  "$OUT/ogg/ctl-fallback"
 control "ogg decode: max_frames ignored"                 "$OUT/ogg/ctl-nocap"
 control "vinyl save: flush does not consume the slot"     "$OUT/vsave/ctl-noclear"

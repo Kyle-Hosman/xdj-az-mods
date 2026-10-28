@@ -15,6 +15,7 @@ azstem_decks_loaded
 azstem_drum_available
 azstem_drum_bank
 azstem_drum_bpm
+azstem_drum_follow
 azstem_drum_gate
 azstem_drum_rate
 azstem_drum_select

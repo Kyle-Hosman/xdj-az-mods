@@ -233,6 +233,14 @@ static float drum_feed_bpm(int d, double live, int master, int master_ok, double
         return 0.0f;
     return (master_live > 20.0 && master_live < 400.0) ? (float) master_live : 0.0f;
 }
+/* The deck whose beat grid and playhead place deck d's roll (azstem_drum_follow): an empty
+ * deck follows the master deck exactly when it rolls at the master's BPM (drum_feed_bpm), so
+ * tempo and phase come from the same deck; anything else follows itself (-1). */
+static int drum_feed_lead(int d, double live, int master, int master_ok, double master_live) {
+    if (live != DBL_MAX || master == d)
+        return -1;
+    return drum_feed_bpm(d, live, master, master_ok, master_live) > 0.0f ? master : -1;
+}
 
 /* Master deck: MasterPlayer::onExchangedMasterPost(SyncMemberID) 0xaabb78 runs when the master
  * changes; word 0 of its argument = {u32 1, u32 deck} (0xfffe = none). Inline-hooked: other

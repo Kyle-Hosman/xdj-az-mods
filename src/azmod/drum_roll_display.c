@@ -42,6 +42,7 @@ static void (*g_drum_touch_fn)(int, int);
 static void (*g_drum_bank_fn)(int);
 static int (*g_drum_avail_fn)(void);
 static void (*g_drum_bpm_fn)(int, float); /* per-deck live BPM, see BPMSTATE_CTOR */
+static void (*g_drum_follow_fn)(int, int); /* empty deck -> master's grid (azstem_drum_follow) */
 static void (*g_drum_sync_fn)(int);       /* BEAT SYNC on/off -> azstem_drum_sync */
 static void (*g_drum_tone_fn)(int, int);  /* MIC 2 HI/MID -> azstem_drum_tone (volume, pitch) */
 static _Atomic int g_mic2_tone_tlm = -1;  /* telemetry: last (hi << 16) | mid published */
