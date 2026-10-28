@@ -206,18 +206,28 @@ static int c_desc_y(const azmod_fb *fb) {
     return c_master_y(fb) + c_rrowh(fb) + fb->h * 14 / 800;
 }
 static const char *c_desc(int it);
-static int c_desc_lines(int it) { /* the description's lines, never fewer than 2 */
-    int n = 1;
-    for (const char *p = c_desc(it); *p; p++)
-        n += *p == '\n';
+/* Descriptions: drawn at c_desc_px, one line every c_desc_lh, word-wrapped to the width their
+ * place has (c_wrap). Every place grows to the lines its text needs, so none is ever cut. */
+static int c_desc_px(const azmod_fb *fb) {
+    return fb->h * 17 / 800;
+}
+static int c_desc_lh(const azmod_fb *fb) {
+    return fb->h * 26 / 800;
+}
+/* the width of the pane's own description (and a GROUP's line above its members) */
+static int c_pane_desc_w(const azmod_fb *fb) {
+    return dock_w(fb) - fb->w / 20;
+}
+static int c_desc_lines(const azmod_fb *fb, int it) { /* the pane's lines, never fewer than 2 */
+    int n = c_wrap_n(c_desc(it), c_desc_px(fb), c_pane_desc_w(fb));
     return n < 2 ? 2 : n;
 }
 /* the "Options" caption: below however many description lines the mod has */
 static int c_opts_y(const azmod_fb *fb, int left) {
-    return c_desc_y(fb) + c_desc_lines(left) * fb->h * 26 / 800 + fb->h * 18 / 800;
+    return c_desc_y(fb) + c_desc_lines(fb, left) * c_desc_lh(fb) + fb->h * 18 / 800;
 }
-/* A GROUP's pane has no switch of its own: a one-line description, then each
- * member as a row with its own description line under the label. */
+/* A GROUP's pane has no switch of its own: its description, then each
+ * member as a row with its own description under the label. */
 static int c_grow_h(const azmod_fb *fb) {
     return c_rrowh(fb) + fb->h * 30 / 800;
 }
@@ -278,21 +288,131 @@ static void c_rshow(const azmod_fb *fb, int left, int k) {
         g_rscroll = y + h - bot;
     c_rclamp(fb, left);
 }
+/* ---- tall sub-option rows -------------------------------------------------------------------
+ * A sub-option row with buttons (a CHOICE: two wide buttons, or a bank of more) is TALL, twice
+ * c_grow_h, when its buttons would not fit beside its label: they then get a line of their own
+ * under the label and its description, from the label's left edge. The rule is measured per row
+ * from the label's and the values' widths (official and registered rows alike), so every row
+ * that fits keeps the normal height and layout. Each button is wide enough for its row's
+ * longest value at the button text size (item_btn_w). c_detail_rect0 stacks the rows by their
+ * heights, so the draw, the scroll range, the knob's scrolling and every hit test follow. */
+/* where row it's label starts in left's pane, from the row's left edge: the margin, the indent
+ * under its parent, Extras' icon (as c_draw_right_body draws a sub-option row) */
+static int c_label_dx(const azmod_fb *fb, int left, int it) {
+    int dx = fb->w / 40;
+    if (az_has_value(it) && it != left)
+        dx += (az_depth(it) - az_depth(left) - 1) * fb->w / 32;
+    if (az_has_value(it) && az_parent(it) >= 0 &&
+        (az_row(az_parent(it))->d.flags & AZ_ROW_CHILD_ICONS))
+        dx += c_rrowh(fb) * 55 / 100 + fb->w / 60;
+    return dx;
+}
+/* The buttons of CHOICE row it in a row rw wide: n of them, bw x bh, gap apart, the first at x0
+ * and top y, both from the row's top-left corner. Normal height: at the row's right end, two on
+ * the label's line, a bank centered on the row. Tall: the line under the description. */
+struct c_btns {
+    int n, x0, y, bw, bh, gap;
+};
+static int c_row_extra(const azmod_fb *fb, int left, int it);
+static void c_btns_at(const azmod_fb *fb, int left, int it, int rw, bool tall, struct c_btns *q) {
+    int rh = c_rrowh(fb), gh = c_grow_h(fb);
+    q->n = az_n_choices(it);
+    if (q->n > 2) { /* a bank: square unless a value needs more width */
+        q->bh = rh * 3 / 4;
+        q->gap = q->bh / 3;
+        q->bw = item_btn_w(it, q->bh, q->bh);
+        q->y = (gh - q->bh) / 2;
+    } else {
+        q->bh = rh * 3 / 5;
+        q->gap = fb->w * 10 / 1280;
+        q->bw = item_btn_w(it, fb->w * 132 / 1280, q->bh);
+        q->y = fb->h * 8 / 800;
+    }
+    int span = q->n * q->bw + (q->n - 1) * q->gap, right = rw - fb->w / 40;
+    if (!tall) {
+        q->x0 = right - span;
+        return;
+    }
+    q->x0 = c_label_dx(fb, left, it);
+    q->y = gh + (gh - q->bh) / 2 + c_row_extra(fb, left, it); /* under the whole description */
+    if (q->n > 0 && span > right - q->x0) { /* more values than one line holds: narrower */
+        int fit = (right - q->x0 - (q->n - 1) * q->gap) / q->n;
+        q->bw = fit > 1 ? fit : 1;
+    }
+}
+/* whether sub-option row it (not the pane's own switch row) is tall in left's pane */
+static bool c_row_tall(const azmod_fb *fb, int left, int it) {
+    if (it == left || az_kind(left) == AZ_ROW_GROUP || az_n_choices(it) < 2)
+        return false;
+    struct c_btns q;
+    c_btns_at(fb, left, it, dock_w(fb), false, &q);
+    int end = c_label_dx(fb, left, it) + menu_text_w(az_pane_label(it), c_rrowh(fb) * 44 / 100);
+    return end + fb->w / 80 > q.x0;
+}
+/* the width row it's description has in left's pane: from the label's left edge to the row's
+ * right margin, less what sits beside it (a box or a chevron; the buttons of a bank at the normal
+ * height). A two-way choice's buttons are on the label's line and a tall row's on a line of their
+ * own, so theirs runs to the margin. */
+static int c_rowdesc_w(const azmod_fb *fb, int left, int it) {
+    int rw = dock_w(fb), right = rw - fb->w / 40, box = fb->h * 20 / 800 + fb->h * 12 / 800;
+#ifdef AZMOD_HAVE_DAYMODE
+    if (c_is_theme(it))
+        return right - fb->w / 40 - box;
+#endif
+    int lx = c_label_dx(fb, left, it);
+    if (az_kind(left) == AZ_ROW_GROUP)
+        return right - box - lx; /* a member: a box or a chevron at its right end */
+    if (c_row_tall(fb, left, it) || az_n_choices(it) == 2)
+        return right - lx;
+    if (az_n_choices(it) > 2) { /* a bank beside it, the gap a box keeps */
+        struct c_btns q;
+        c_btns_at(fb, left, it, rw, false, &q);
+        return q.x0 - fb->h * 12 / 800 - lx;
+    }
+    return right - box - lx;
+}
+static const char *c_rowdesc(int it);
+/* how much taller than its layout's height row it is for its description: a row holds one line
+ * of it (a tall row two, above its buttons); every further line adds a line's height */
+static int c_row_extra(const azmod_fb *fb, int left, int it) {
+    int n = c_wrap_n(c_rowdesc(it), c_desc_px(fb), c_rowdesc_w(fb, left, it)),
+        cap = c_row_tall(fb, left, it) ? 2 : 1;
+    return n > cap ? (n - cap) * c_desc_lh(fb) : 0;
+}
+/* sub-option row it's height in left's pane: the normal height or a tall row's, plus its
+ * description's further lines */
+static int c_row_h(const azmod_fb *fb, int left, int it) {
+    int gh = c_grow_h(fb);
+    return (c_row_tall(fb, left, it) ? 2 * gh : gh) + c_row_extra(fb, left, it);
+}
+/* a GROUP pane's first member row: under the pane's description, however many lines it has */
+static int c_group_y0(const azmod_fb *fb, int left) {
+    int n = c_wrap_n(c_desc(left), c_desc_px(fb), c_pane_desc_w(fb));
+    return c_master_y(fb) + fb->h * 44 / 800 + (n > 1 ? (n - 1) * c_desc_lh(fb) : 0);
+}
 static void c_detail_rect0(const azmod_fb *fb, int left, int k, int *x, int *y, int *w, int *h) {
     *x = dock_x(fb);
     *w = dock_w(fb);
     *h = c_rrowh(fb);
+    int r[AZI_COUNT], m, gh = c_grow_h(fb), gap = fb->h * 6 / 800;
     if (az_kind(left) == AZ_ROW_GROUP) {
-        *h = c_grow_h(fb);
-        *y = c_master_y(fb) + fb->h * 44 / 800 + k * (*h + fb->h * 6 / 800);
+        m = c_detail(left, r);
+        *h = gh + (k < m ? c_row_extra(fb, left, r[k]) : 0);
+        *y = c_group_y0(fb, left) + k * (gh + gap);
+        for (int j = 0; j < k && j < m; j++)
+            *y += c_row_extra(fb, left, r[j]);
         return;
     }
     if (k == 0) {
         *y = c_master_y(fb);
         return;
     }
-    *h = c_grow_h(fb); /* label + its description line */
-    *y = c_opts_y(fb, left) + fb->h * 32 / 800 + (k - 1) * (*h + fb->h * 6 / 800);
+    /* label + its description; the rows above by their own heights */
+    m = c_detail(left, r);
+    *h = k < m ? c_row_h(fb, left, r[k]) : gh;
+    *y = c_opts_y(fb, left) + fb->h * 32 / 800 + (k - 1) * (gh + gap);
+    for (int j = 1; j < k && j < m; j++)
+        *y += c_row_h(fb, left, r[j]) - gh;
 }
 /* The knob moved the selection to entry k (the left list) or the focus to row k (left's pane):
  * glide to the offset c_lshow / c_rshow would set. Quick detents add up from where the glide is
@@ -333,12 +453,15 @@ static bool c_glide_tick(const azmod_state *s) {
 /* Button b of a bank row (a CHOICE of more than two: the drum banks) in left's pane. */
 static void c_bank_rect(const azmod_fb *fb, int left, int row, int it, int b, int *x, int *y, int *w,
                         int *h) {
-    int rx, ry, rw, rh, nb = az_n_choices(it);
+    int rx, ry, rw, rh;
+    struct c_btns q;
     c_detail_rect(fb, left, row, &rx, &ry, &rw, &rh);
-    int side = c_rrowh(fb) * 3 / 4, gap = side / 3;
-    *x = rx + rw - fb->w / 40 - nb * side - (nb - 1) * gap + b * (side + gap);
-    *y = ry + (rh - side) / 2;
-    *w = *h = side;
+    bool tall = c_row_tall(fb, left, it);
+    c_btns_at(fb, left, it, rw, tall, &q);
+    *x = rx + q.x0 + b * (q.bw + q.gap);
+    *y = ry + (tall ? q.y : (rh - q.bh) / 2);
+    *w = q.bw;
+    *h = q.bh;
 }
 /* A two-way CHOICE instead of a checkbox, for settings where neither side is
  * "off": exactly one of the two buttons lit (the row's choices, features.def).
@@ -349,16 +472,17 @@ static bool c_is_choice(int it) {
 static const char *c_choice_label(int it, int b) {
     return az_choice_label(it, b);
 }
-static void c_choice_rect(const azmod_fb *fb, int left, int row, int b, int *x, int *y, int *w,
-                          int *h) {
+/* on the label line, so the description below gets the full width; a tall row's on its own line */
+static void c_choice_rect(const azmod_fb *fb, int left, int row, int it, int b, int *x, int *y,
+                          int *w, int *h) {
     int rx, ry, rw, rh;
+    struct c_btns q;
     c_detail_rect(fb, left, row, &rx, &ry, &rw, &rh);
-    int bh = c_rrowh(fb) * 3 / 5, bw = fb->w * 132 / 1280, gap = fb->w * 10 / 1280;
-    (void) rh; /* on the label line, so the description below gets the full width */
-    *x = rx + rw - fb->w / 40 - 2 * bw - gap + b * (bw + gap);
-    *y = ry + fb->h * 8 / 800;
-    *w = bw;
-    *h = bh;
+    c_btns_at(fb, left, it, rw, c_row_tall(fb, left, it), &q);
+    *x = rx + q.x0 + b * (q.bw + q.gap);
+    *y = ry + q.y;
+    *w = q.bw;
+    *h = q.bh;
 }
 
 /* A row's description (features.def help): under a left entry's header in its pane, or on the
@@ -368,6 +492,10 @@ static const char *c_desc(int it) {
     return r && r->d.help ? r->d.help : "";
 }
 static const char *c_rowdesc(int it) {
+#ifdef AZMOD_HAVE_DAYMODE
+    if (c_is_theme(it))
+        return C_THEME_DESC[it - C_THEME_ROW0];
+#endif
     return c_desc(it);
 }
 /* The last left-list category, for this EP147 run only (leave the Mod Menu on Themes,
@@ -622,7 +750,7 @@ static int c_ctl_at(azmod_state *s, const azmod_fb *fb, int tx, int ty) {
         if (c_is_choice(it)) {
             for (int b = 0; b < 2; b++) {
                 int qx, qy, qw, qh;
-                c_choice_rect(fb, pn, k, b, &qx, &qy, &qw, &qh);
+                c_choice_rect(fb, pn, k, it, b, &qx, &qy, &qw, &qh);
                 if (in_rect(tx, ty, qx - 4, qy - 4, qw + 8, qh + 8))
                     return (k << 8) | (1 + b);
             }
@@ -976,9 +1104,9 @@ static void c_focus_ring(const azmod_fb *fb, int x, int y, int w, int h) {
 static void c_draw_group(azmod_state *s,
                          const azmod_fb *fb) { /* a group's members, each described */
     int x0 = dock_x(fb), w0 = dock_w(fb), it0 = c_pane(s);
-    int dpx = fb->h * 17 / 800, lh = fb->h * 26 / 800;
-    c_text_fit(fb, x0 + fb->w / 40, c_master_y(fb) - g_rscroll, w0 - fb->w / 20, lh, c_desc(it0),
-               dpx, C_TEXT_DIM);
+    int dpx = c_desc_px(fb), lh = c_desc_lh(fb);
+    c_draw_wrapped(fb, x0 + fb->w / 40, c_master_y(fb) - g_rscroll, c_desc(it0), dpx, lh,
+                   C_TEXT_DIM, c_pane_desc_w(fb));
     int r[AZI_COUNT], m = c_detail(it0, r), rh = c_rrowh(fb), rpx = rh * 44 / 100;
     for (int k = 0; k < m; k++) {
         int it = r[k], x, y, w, h;
@@ -995,16 +1123,15 @@ static void c_draw_group(azmod_state *s,
         /* Extras' rows carry the icons the overview shows beside them. A GROUP's pane
          * is painted here, never in c_draw_right_body, so the icons are drawn here. */
         int icx = 0;
-        if (az_row(it0)->d.flags & AZ_ROW_CHILD_ICONS) {
-            int isz = rh * 55 / 100;
-            draw_item_icon(fb, x + fb->w / 40, y + (h - isz) / 2, isz, it, ink);
+        if (az_row(it0)->d.flags & AZ_ROW_CHILD_ICONS) { /* beside the label: the row's first line */
+            int isz = rh * 55 / 100, bh = h > c_grow_h(fb) ? c_grow_h(fb) : h;
+            draw_item_icon(fb, x + fb->w / 40, y + (bh - isz) / 2, isz, it, ink);
             icx = isz + fb->w / 60;
         }
         c_text(fb, x + fb->w / 40 + icx, y + fb->h * 4 / 800, 0, rh - fb->h * 8 / 800,
                az_label(it), rpx, ink);
-        c_text_fit(fb, x + fb->w / 40 + icx, y + rh - fb->h * 10 / 800,
-                   w - fb->w / 40 - fb->h * 20 / 800 - fb->h * 12 / 800 - (fb->w / 40 + icx), lh,
-                   c_rowdesc(it), dpx, hi ? C_HI_TEXT : C_TEXT_DIM);
+        c_draw_wrapped(fb, x + fb->w / 40 + icx, y + rh - fb->h * 10 / 800, c_rowdesc(it), dpx, lh,
+                       hi ? C_HI_TEXT : C_TEXT_DIM, c_rowdesc_w(fb, it0, it));
         int sz = fb->h * 20 / 800;
         if (az_screen(it) >= 0) { /* opens a screen: the chevron where a box sits */
             int chw = sz * 16 / 28;
@@ -1049,7 +1176,7 @@ static void c_draw_right(azmod_state *s, const azmod_fb *fb) { /* a mod's settin
 }
 static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
     int x0 = dock_x(fb), w0 = dock_w(fb), it0 = c_pane(s);
-    int dpx = fb->h * 17 / 800, lh = fb->h * 26 / 800, dy = c_desc_y(fb) - g_rscroll;
+    int dpx = c_desc_px(fb), lh = c_desc_lh(fb), dy = c_desc_y(fb) - g_rscroll;
     if (az_kind(it0) == AZ_ROW_GROUP) {
         c_draw_group(s, fb);
         return;
@@ -1067,7 +1194,7 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
                                 sz, ink);
         }
     }
-    c_draw_lines(fb, x0 + fb->w / 40, dy, c_desc(it0), dpx, lh, C_TEXT_DIM, w0 - fb->w / 20);
+    c_draw_wrapped(fb, x0 + fb->w / 40, dy, c_desc(it0), dpx, lh, C_TEXT_DIM, c_pane_desc_w(fb));
     int r[AZI_COUNT], m = c_detail(it0, r);
     int rpx = c_rrowh(fb) * 44 / 100;
     if (m > 1) {
@@ -1098,8 +1225,8 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
             bool on = az_on(AZF_THEMES) && c_theme_get() == t;
             c_text(fb, x + fb->w / 40, y + fb->h * 4 / 800, 0, rh - fb->h * 8 / 800,
                    C_THEME_NAME[t], rpx, C_TEXT);
-            c_text_fit(fb, x + fb->w / 40, y + rh - fb->h * 10 / 800,
-                       w - fb->w / 20 - fb->h * 32 / 800, lh, C_THEME_DESC[t], dpx, C_TEXT_DIM);
+            c_draw_wrapped(fb, x + fb->w / 40, y + rh - fb->h * 10 / 800, c_rowdesc(it), dpx, lh,
+                           C_TEXT_DIM, c_rowdesc_w(fb, it0, it));
             int sz = fb->h * 20 / 800;
             draw_checkbox(fb, x + w - fb->w / 40 - sz, y + (h - sz) / 2, sz, on, false);
             continue;
@@ -1123,9 +1250,9 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
         int icx = 0;
         if (k > 0 && az_has_value(it) && az_parent(it) >= 0 &&
             (az_row(az_parent(it))->d.flags & AZ_ROW_CHILD_ICONS)) {
-            int isz = c_rrowh(fb) * 55 / 100;
-            draw_item_icon(fb, x + fb->w / 40 + indent, y + (h - isz) / 2, isz, it,
-                           hi ? C_HI_TEXT : ink);
+            int isz = c_rrowh(fb) * 55 / 100, bh = h > c_grow_h(fb) ? c_grow_h(fb) : h;
+            draw_item_icon(fb, x + fb->w / 40 + indent, y + (bh - isz) / 2, isz, it,
+                           hi ? C_HI_TEXT : ink); /* a tall row's: beside the label */
             icx = isz + fb->w / 60;
         }
         if (k == 0)
@@ -1134,16 +1261,14 @@ static void c_draw_right_body(azmod_state *s, const azmod_fb *fb) {
             int rh = c_rrowh(fb);
             c_text(fb, x + fb->w / 40 + indent + icx, y + fb->h * 4 / 800, 0, rh - fb->h * 8 / 800,
                    lab, rpx, ink);
-            c_text_fit(fb, x + fb->w / 40 + indent + icx, y + rh - fb->h * 10 / 800,
-                       w - fb->w / 40 -
-                           (c_is_choice(it) ? 0 : fb->h * 20 / 800 + fb->h * 12 / 800) -
-                           (fb->w / 40 + indent + icx),
-                       lh, c_rowdesc(it), dpx, hi ? C_HI_TEXT : C_TEXT_DIM);
+            /* wrapped to the width the row gives it; the row is as tall as its lines */
+            c_draw_wrapped(fb, x + fb->w / 40 + indent + icx, y + rh - fb->h * 10 / 800, c_rowdesc(it),
+                           dpx, lh, hi ? C_HI_TEXT : C_TEXT_DIM, c_rowdesc_w(fb, it0, it));
         }
         if (c_is_choice(it)) { /* two buttons, one lit */
             for (int b = 0; b < 2; b++) {
                 int qx, qy, qw, qh;
-                c_choice_rect(fb, it0, k, b, &qx, &qy, &qw, &qh);
+                c_choice_rect(fb, it0, k, it, b, &qx, &qy, &qw, &qh);
                 bool lit = active && az_get(it) == b;
                 uint32_t on_bg = hi ? C_HI_TEXT : C_HI, on_fg = hi ? C_HI : C_HI_TEXT;
                 if (lit)

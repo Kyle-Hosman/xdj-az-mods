@@ -28,6 +28,9 @@
 #                rejected (guest/azstem/stem_envelopes.c)
 #   ofs cache    the stem offset cache on the stick: a lag reused only for the same source and stem
 #                set, anything else a miss (guest/azstem/ofsload.c, stem_playback.c stems_key)
+#   ofs corr     the stem offset correlator: confident for the exact lag of broadband and bass-heavy
+#                audio, not for repeating audio, a lag past the window or other audio
+#                (guest/azstem/key_shift.c ofs_correlate)
 #   rs request   a Remote Stems request: the library's title and path cannot add a key line
 #                (guest/azmod/remote_stems.c rs_write_req)
 #   rs_status_banner  which Remote Stems status lines reach the banner (guest/azmod/remote_stems.c)
@@ -141,6 +144,12 @@
 #   menuscroll   rows registered past the screen: fixed row height, the lists scroll (knob, drag, tap) with
 #                EP147's own scroll bar; both lists glide (a fling after a moving lift, caught by a finger,
 #                knob steps glide); icons clipped to the list; a mod's page keeps the offset (menuscroll_test.c)
+#   menutall     a CHOICE row whose buttons do not fit beside its label is twice as tall, its buttons on
+#                their own line; rows that fit keep the old geometry; scroll, knob, taps, the compact list
+#                and a registered row follow (menutall_test.c)
+#   menuwrap     every Mod Menu description is word-wrapped to its width and drawn whole: inside its row,
+#                clear of the row's controls, the row as tall as its lines, a tall row's buttons under all
+#                of them, a word wider than the row broken, never cut (menuwrap_test.c)
 #   cmorderly    the community quarantine's orderly stop: a SIGTERM while EP147 is alive clears the start
 #                count, a frozen deck's does not, the process still ends by the signal (cmorderly_test.c)
 #   cmtouch      Community Mods home page by touch: a drag scrolls and never fires, a tap fires on release at the
@@ -195,6 +204,9 @@
 #   bustrace     the bus read path replays a seeded frame stream to the recorded trace (busread-trace.sh)
 #   cmlayout     every Community Mods screen draws as recorded, over the catalog and installed-mod
 #                fixtures in every view, tab, page and scroll (cmlayout-golden.sh, cmlayout_digest.h)
+#   tsan-skip    the suites the ThreadSanitizer pass does not run start no thread or process, take
+#                no lock and install no signal handler, on the programs each pass built
+#                (tsan-skip-lint.sh)
 #   deck slot    an audio unit is a deck by identity only; no number or a held slot is unknown, never
 #                the next free slot (guest/azstem/stem_playback.c deck_slot)
 #   trackgen     a deck's generation moves on load and eject, before the publish (stem_playback.c)
@@ -313,6 +325,10 @@ co_notrun=0 # suites a compile-only pass built and did not run
 #    fail is the plain pass's question, and a sanitizer abort would answer it for the wrong reason.
 #    The lints, goldens of non-C tools, docker-built aarch64 checks and the release-library checks
 #    test no host code and run in the plain pass only.
+#  - The tsan pass builds but does not run the single-threaded goldens marked with tsan_skip (the
+#    Community Mods layouts, the Mod Menu dump): their programs start no second thread, take no
+#    lock and install no signal handler, so ThreadSanitizer has nothing to report in them, and
+#    tsan-skip-lint.sh proves that in every pass on the programs that pass built.
 #  - The pass has its own controls (sanplant_test.c): a planted heap overflow and signed overflow
 #    (asan) or data race (tsan) must each be reported by the sanitizer itself, and a clean build of
 #    the same file must pass, in the same round.
@@ -475,6 +491,23 @@ plain_only() {
     fi
     [ -z "$SAN" ] && return 0
     echo "(sanitizer pass: $1 runs in the plain pass)"
+    return 1
+}
+
+# tsan_skip <what> <program>... : 1 in the ThreadSanitizer pass (printed, not a skip: the plain and
+# asan passes run <what>), else 0. Only for a suite whose test programs start no second thread, take
+# no lock and install no signal handler: ThreadSanitizer reports races between threads, lock misuse
+# and signal-unsafe handlers, and such a program can produce none of them. Every pass records the
+# named programs and tsan-skip-lint.sh proves that property on them in the same pass (see
+# "single-threaded suites"), so a suite that gains a thread fails the run instead of losing TSan.
+TSAN_SKIP_PROGS=()
+tsan_skip() {
+    local what=$1
+    shift
+    [ $# -gt 0 ] || { echo "tsan_skip \"$what\": name the suite's test programs"; exit 2; }
+    TSAN_SKIP_PROGS+=("$@")
+    [ "$SAN" = tsan ] || return 0
+    echo "(tsan pass: $what is single-threaded and runs in the plain and asan passes; tsan-skip-lint.sh checks its programs)"
     return 1
 }
 
@@ -960,6 +993,26 @@ for v in real ctl-nosize ctl-nokey ctl-anylag ctl-trailing ctl-inplace; do
     $CC "${CFLAGS[@]}" -I$T -DOFSCACHE_INC="\"$d/$v.inc\"" -o "$d/$v" $T/ofscache_test.c
 done
 suite "stem offset cache" "$d/real" "$d/scratch-real"
+
+# ---------------------------------------------------------------- the stem offset correlator
+# ofs_correlate (key_shift.c): the exact lag, confident for broadband and bass-heavy audio; not
+# confident for audio that repeats inside the window, a lag past the window, or other audio
+# (ofscorr_test.c)
+d="$OUT/ofscorr"; mkdir -p "$d"
+awk '/^typedef struct \{$/ {buf=$0; next} buf != "" && !p { if ($0 ~ /^    long lag;$/) {print buf; p=1} buf="" }
+     p {print} p && /^static void ofs_correlate\(/ {q=1} q && /^}$/ {exit}' guest/azstem/key_shift.c > "$d/real.inc"
+grep -q 'static void ofs_correlate(' "$d/real.inc" && grep -q 'double fine, coarse, second;' "$d/real.inc" &&
+    grep -q 'second = best;' "$d/real.inc" || { echo "extraction of the stem offset correlator failed"; exit 2; }
+# control: the runner-up taken from the peak's own lobe (only two coarse bins either side skipped)
+mutate "$d/real.inc" "$d/ctl-oldlobe.inc" 's/if \(\(l < lo \|\| l > hi\) && cc\[l \+ LD\] > second\)/if (abs(l - bl) > 2 \&\& cc[l + LD] > second)/'
+# control: no runner-up at all
+mutate "$d/real.inc" "$d/ctl-norival.inc" 's/if \(\(l < lo \|\| l > hi\) && cc\[l \+ LD\] > second\)\n\s*second = cc\[l \+ LD\];/;/'
+# control: a peak on the window's edge given a lead
+mutate "$d/real.inc" "$d/ctl-noedge.inc" 's/if \(bl == -LD \|\| bl == LD\)\n\s*second = best;\n\s*else\n//'
+for v in real ctl-oldlobe ctl-norival ctl-noedge; do
+    $CC "${CFLAGS[@]}" -I$T -DOFSCORR_INC="\"$d/$v.inc\"" -pthread -o "$d/$v" $T/ofscorr_test.c -lm
+done
+suite "stem offset correlator" "$d/real"
 
 # ---------------------------------------------------------------- Remote Stems request files
 # rs_write_req (remote_stems.c): key=value lines the helper reads, the library's text unable to add
@@ -1984,8 +2037,13 @@ mutate "$d/real.c" "$d/ctl-bank0.c" 's/int req = atomic_load_explicit\(&g_drum_r
 # control 14: an empty deck never follows the master (its roll free-runs, off the master's beat)
 mutate "$d/real.c" "$d/ctl-nofollow.c" 's/if \(lead >= 0 && lead < DRUM_SIDES && lead != side\) \{/if (0) {/'
 # control 15: a follower judged by its own playhead (an empty deck never moves: no lock)
-mutate "$d/real.c" "$d/ctl-ownmoving.c" 's/\n\s*moving = atomic_load_explicit\(&g_drum_moving_pub\[lead\], memory_order_relaxed\);//'
-for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0 ctl-nofollow ctl-ownmoving; do
+mutate "$d/real.c" "$d/ctl-ownmoving.c" 's/\n\s*moving = g_drum_lead_still\[side\] < DRUM_SYNC_STALL;//'
+# control 16: the lead's stillness never counted (a master whose blocks stop reads as moving
+# forever: the follower's first hit waits for a boundary that never comes)
+mutate "$d/real.c" "$d/ctl-leadstill.c" 's/\n\s*else if \(g_drum_lead_still\[side\] < DRUM_AGE_MAX\)\n\s*g_drum_lead_still\[side\] \+= ns;//'
+# control 17: a new lead's first reading taken as motion (a paused master waits out the stall)
+mutate "$d/real.c" "$d/ctl-leadnew.c" 's/\n\s*else if \(g_drum_lead_of\[side\] != lead\)\n[^\n]*\/\* a new lead[^\n]*//'
+for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0 ctl-nofollow ctl-ownmoving ctl-leadstill ctl-leadnew; do
     $CC "${CFLAGS[@]}" -Wno-unused-parameter -I$T -Iguest/azstem -DDRUM_INC="\"$d/$v.c\"" -o "$d/$v" $T/drumroll_test.c -lpthread -lm
 done
 suite "drumroll" "$d/real" "$d/scratch"
@@ -2087,10 +2145,12 @@ for v in real ctl; do
     done
 done
 mkdir -p "$d/s1" "$d/s2" "$d/s3" "$d/s4"
-suite "menu dump (release)" $T/menudump-check.sh "$d/real-rel" $T/menudump.golden-rel.gz "$d/s1/azmod.cfg"
+if tsan_skip "menu dump (release)" "$d/real-rel"; then
+    suite "menu dump (release)" $T/menudump-check.sh "$d/real-rel" $T/menudump.golden-rel.gz "$d/s1/azmod.cfg"
+fi
 if [ "$PUBLIC" = 1 ]; then
     skip "menu dump (development): the published tree has no development-build code"
-else
+elif tsan_skip "menu dump (development)" "$d/real-dev"; then
     suite "menu dump (development)" $T/menudump-check.sh "$d/real-dev" $T/menudump.golden-dev.gz "$d/s2/azmod.cfg"
 fi
 
@@ -2428,6 +2488,46 @@ for v in real ctl-shrink ctl-shrinkc ctl-footer ctl-offscreen ctl-dragtoggle ctl
 done
 suite "menu scroll" "$d/real"
 
+# menutall_test.c: tall sub-option rows (menu_full.c c_row_tall / c_btns_at, menu_list.c item_btn_w /
+# item_bank_tall). Built against the menu scroll suite's stubs.
+d="$OUT/menutall"; mkdir -p "$d"
+for v in real ctl-notall ctl-nostack ctl-nowiden; do menu_variant "$d/src-$v" menu_full.c menu_list.c; done
+# control 1: no row is ever tall (the old layout: buttons over the label)
+mutate guest/azmod/menu_full.c "$d/src-ctl-notall/menu_full.c" 's/(static bool c_row_tall\(const azmod_fb \*fb, int left, int it\) \{\n)/$1    return false;\n/'
+# control 2: a tall row's extra height is not added to the rows below it (they overlap it)
+mutate guest/azmod/menu_full.c "$d/src-ctl-nostack/menu_full.c" 's/\*y \+= c_row_h\(fb, left, r\[j\]\) - gh;/*y += 0;/'
+# control 3: buttons keep their minimum width, so a long value shrinks below the button text size
+mutate guest/azmod/menu_list.c "$d/src-ctl-nowiden/menu_list.c" 's/(static int item_btn_w\(int i, int w0, int h\) \{\n)/$1    return w0;\n/'
+for v in real ctl-notall ctl-nostack ctl-nowiden; do
+    $CC -std=gnu11 -O1 -w -I"$d/src-$v" -Iguest/azmod -I$T -DMENU_C="\"$d/src-$v/menu.c\"" -DCM_CATALOG="\"$d/catalog-$v\"" \
+        -o "$d/$v" $T/menutall_test.c "$OUT/menuscroll/stubs.o"
+done
+suite "menu tall rows" "$d/real"
+
+# menuwrap_test.c: Mod Menu descriptions word-wrap to their width and are never cut (ui_draw.c
+# c_wrap, menu_full.c c_rowdesc_w / c_row_extra). Its own stubs: the face's width is the test's,
+# run at the default 8 px a byte and at a wider 11.
+d="$OUT/menuwrap"; mkdir -p "$d"
+for v in real ctl-nowrap ctl-nogrow ctl-nobtnshift; do menu_variant "$d/src-$v" ui_draw.c menu_full.c; done
+# control 1: a line breaks only at a newline (the old clip at the row's width, minus the "...")
+mutate guest/azmod/ui_draw.c "$d/src-ctl-nowrap/ui_draw.c" 's/if \(measure && azmod_ttf_menu_width\(p, take, px, 2\) > maxw\) \{/if (0) {/'
+# control 2: a row never grows for its description's further lines
+mutate guest/azmod/menu_full.c "$d/src-ctl-nogrow/menu_full.c" 's/(static int c_row_extra\(const azmod_fb \*fb, int left, int it\) \{\n)/$1    return 0;\n/'
+# control 3: a tall row's buttons stay on its second line, over a description longer than two lines
+mutate guest/azmod/menu_full.c "$d/src-ctl-nobtnshift/menu_full.c" 's/ \+ c_row_extra\(fb, left, it\); \/\* under the whole description \*\//;/'
+$CC -w -Iguest/azmod -Dmain=lanetest_main -Dazmod_ttf_menu=lanetest_ttf_menu -Dazmod_ttf_menu2=lanetest_ttf_menu2 \
+    -Dazmod_ttf_menu_width=lanetest_ttf_menu_width \
+    -Dazcm_count=lanetest_azcm_count -Dazcm_info=lanetest_azcm_info -Dazcm_screen_draw=lanetest_azcm_screen_draw \
+    -Dazcm_screen_input=lanetest_azcm_screen_input -Dazcm_screen_enter=lanetest_azcm_screen_enter \
+    -Dazmod_dm_on=lanetest_dm_on -Dazmod_dm_map=lanetest_dm_map -Dazmod_dm_key=lanetest_dm_key \
+    -c -o "$d/stubs.o" guest/azmod/lanetest.c
+for v in real ctl-nowrap ctl-nogrow ctl-nobtnshift; do
+    $CC -std=gnu11 -O1 -w -I"$d/src-$v" -Iguest/azmod -I$T -DMENU_C="\"$d/src-$v/menu.c\"" -DCM_CATALOG="\"$d/catalog-$v\"" \
+        -o "$d/$v" $T/menuwrap_test.c "$d/stubs.o"
+done
+suite "menu description wrap (8 px a byte)" "$d/real" 8
+suite "menu description wrap (11 px a byte)" "$d/real" 11
+
 # iconcache_test.c: the Mod Menu's icon cache (ui_draw.c draw_item_icon)
 d="$OUT/iconcache"; mkdir -p "$d"
 for v in real ctl-noground ctl-notheme ctl-anyground ctl-nohit ctl-spill; do menu_variant "$d/src-$v" ui_draw.c; done
@@ -2647,7 +2747,12 @@ mutate guest/azmod/bus_interpose.c "$BL/azmod/bus_interpose.c" \
 echo
 
 echo "=== Community Mods layouts ==="
-if CC="$CC" "$T/cmlayout-golden.sh" guest "$OUT/cmlayout/real"; then :; else failures=$((failures + 1)); fi
+if tsan_skip "cmlayout-golden" "$OUT/cmlayout/real/cmcat" "$OUT/cmlayout/real/cmmod"; then
+    if CC="$CC" "$T/cmlayout-golden.sh" guest "$OUT/cmlayout/real"; then :; else failures=$((failures + 1)); fi
+else
+    # built, not run: tsan-skip-lint.sh checks the programs this pass compiled
+    AZ_COMPILE_ONLY=1 CC="$CC" "$T/cmlayout-golden.sh" guest "$OUT/cmlayout/real" || failures=$((failures + 1))
+fi
 CG="$OUT/cmlayout/ctl-guest"; mkdir -p "$CG"; cp -R guest/azmod "$CG/"
 # control: the full-screen header's divider one pixel taller
 mutate guest/azmod/screen_community.c "$CG/azmod/screen_community.c.new" \
@@ -3237,8 +3342,10 @@ mutate "$d/real.h" "$d/ctl-posttaps.h" 's/long long m = \(i - o->on\) \/ D \+ 1;
 mutate "$d/real.h" "$d/ctl-noseq.h" 's/        if \(a & 1u\)\n            continue;\n        o->kind/        o->kind/'
 mutate "$d/real.h" "$d/ctl-notag.h" 's/return \(\(uint64_t\) idx << 16\) \| \(tag & 0xffffu\);/return (uint64_t) idx << 16;/'
 mutate "$d/real.h" "$d/ctl-nooff.h" 's/        w \*= 1.f - \(float\) v \/ \(float\) SFX_XF;/        w *= 1.f;/'
+mutate "$d/real.h" "$d/ctl-cutatpress.h" 's/return from_press \? at \+ len : at;/return at;/'
+mutate "$d/real.h" "$d/ctl-phraseall.h" 's/long long lo = o->kind == SFX_ECHO_PHRASE \? o->on - D : 0;/long long lo = 0;/'
 mutate "$d/real.h" "$d/ctl-plain.h" 's/o->kind = atomic_load_explicit\(&s->kind, memory_order_relaxed\);/o->kind = *(int *) &s->kind;/; s/atomic_store_explicit\(&s->kind, kind, memory_order_relaxed\);/*(int *) &s->kind = kind;/'
-for v in real ctl-posttaps ctl-noseq ctl-notag ctl-nooff; do
+for v in real ctl-posttaps ctl-noseq ctl-notag ctl-nooff ctl-cutatpress ctl-phraseall; do
     $CC "${CFLAGS[@]}" -I$T -DSFX_INC="\"$d/$v.h\"" -o "$d/$v" $T/stemfx_test.c -lpthread -lm
 done
 suite "stem fx" "$d/real"
@@ -3871,6 +3978,41 @@ else
 fi
 echo
 
+# ---------------------------------------------------------------- single-threaded suites
+# The suites the ThreadSanitizer pass does not run (tsan_skip above) are checked in every pass on
+# the programs that pass built (tsan-skip-lint.sh): none may import a call that starts a thread or
+# a process, takes a lock or installs a signal handler. In the same round, planted programs that
+# start a thread, take only a lock, or install only a signal handler, and a program that was never
+# built, must each fail the check: a lint that cannot fail proves nothing.
+if co_skip "tsan-skip-lint (inspects built programs)"; then :
+elif [ -n "$COVERAGE" ]; then
+    echo "(coverage pass: tsan-skip-lint runs in the plain and sanitizer passes)"
+else
+    echo "=== single-threaded suites (tsan-skip-lint) ==="
+    if [ ${#TSAN_SKIP_PROGS[@]} = 0 ]; then
+        echo "FAIL  tsan-skip-lint: no suite registered with tsan_skip (the list above is empty)"
+        failures=$((failures + 1))
+    elif bash "$T/tsan-skip-lint.sh" "${TSAN_SKIP_PROGS[@]}"; then :; else failures=$((failures + 1)); fi
+    d="$OUT/tsanskip"; mkdir -p "$d"
+    printf '#include <pthread.h>\nstatic void *f(void *a) { return a; }\nint main(void) { pthread_t t; if (pthread_create(&t, 0, f, 0)) return 1; return pthread_join(t, 0); }\n' > "$d/thread.c"
+    printf '#include <pthread.h>\nstatic pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;\nint main(void) { pthread_mutex_lock(&m); return pthread_mutex_unlock(&m); }\n' > "$d/lock.c"
+    printf '#include <signal.h>\nstatic void h(int s) { (void) s; }\nint main(void) { struct sigaction a = {0}; a.sa_handler = h; return sigaction(SIGUSR1, &a, 0); }\n' > "$d/signal.c"
+    for v in thread lock signal; do $CC "${CFLAGS[@]}" -pthread -o "$d/$v" "$d/$v.c"; done
+    for v in "thread:a program that starts a thread:pthread_create" "lock:a program that only takes a lock:pthread_mutex_lock" \
+             "signal:a program that only installs a signal handler:sigaction" "missing:a program that was never built:is not built"; do
+        IFS=: read -r p what want <<<"$v"
+        rc=0; out=$(bash "$T/tsan-skip-lint.sh" "$d/$p" 2>&1) || rc=$?
+        if [ "$rc" -ne 0 ] && grep -q "^FAIL .*$want" <<<"$out"; then
+            echo "CONTROL FAILED AS REQUIRED  tsan-skip-lint: $what (exit $rc; $want)"
+        else
+            echo "BROKEN TEST: control PASSED  tsan-skip-lint: $what: exit $rc, no FAIL naming '$want'"
+            sed 's/^/      /' <<<"$out"
+            broken_controls=$((broken_controls + 1))
+        fi
+    done
+fi
+echo
+
 # ---------------------------------------------------------------- controls
 # ThreadSanitizer regressions: each race the TSan pass found and fixed, put back in a copy of the
 # fixed code, must be reported again (the fixed code itself runs clean in its suite above).
@@ -4012,6 +4154,12 @@ control "menu scroll: a finger on a flinging list fires the control under it" "$
 control "menu scroll: another pane keeps the right pane's offset and glide" "$OUT/menuscroll/ctl-noput"
 control "menu Reload: a press over 400 ms is taken back" "$OUT/menuscroll/ctl-reload400"
 control "menu Reload: a press held a full second still restarts" "$OUT/menuscroll/ctl-reloadkeep"
+control "menu tall rows: no row is ever tall" "$OUT/menutall/ctl-notall"
+control "menu tall rows: the rows below a tall row do not move down" "$OUT/menutall/ctl-nostack"
+control "menu tall rows: buttons never wider than the minimum (values shrink)" "$OUT/menutall/ctl-nowiden"
+control "menu description wrap: a line breaks only at a newline" "$OUT/menuwrap/ctl-nowrap" 11
+control "menu description wrap: a row never grows for its further lines" "$OUT/menuwrap/ctl-nogrow" 8
+control "menu description wrap: a tall row's buttons over its third line" "$OUT/menuwrap/ctl-nobtnshift" 8
 control "icon cache: the ground color left out of the key" "$OUT/iconcache/ctl-noground"
 control "icon cache: the theme left out of the key" "$OUT/iconcache/ctl-notheme"
 control "icon cache: an icon over a pattern is kept" "$OUT/iconcache/ctl-anyground"
@@ -4203,6 +4351,9 @@ control "stem offset cache: another stem set taken" "$OUT/ofscache/ctl-nokey" "$
 control "stem offset cache: a lag past the window taken" "$OUT/ofscache/ctl-anylag" "$OUT/ofscache/scratch-ctl-anylag"
 control "stem offset cache: text after the line taken" "$OUT/ofscache/ctl-trailing" "$OUT/ofscache/scratch-ctl-trailing"
 control "stem offset cache: saved in place" "$OUT/ofscache/ctl-inplace" "$OUT/ofscache/scratch-ctl-inplace"
+control "stem offset correlator: a bass lobe's shoulder taken as a rival" "$OUT/ofscorr/ctl-oldlobe"
+control "stem offset correlator: no runner-up" "$OUT/ofscorr/ctl-norival"
+control "stem offset correlator: a peak on the window's edge confident" "$OUT/ofscorr/ctl-noedge"
 control "remote stems request: a title's line break adds a key line" "$OUT/rsreq/ctl-title" "$OUT/rsreq/scratch-ctl-title"
 control "remote stems request: a split or cut path queued" "$OUT/rsreq/ctl-path" "$OUT/rsreq/scratch-ctl-path"
 control "remote stems scan: any file in the queue counted as a request" "$OUT/rsscan/ctl-anyfile" "$OUT/rsscan/scratch-ctl-anyfile"
@@ -4284,6 +4435,8 @@ control "drumroll: grid rate assumed to be 44.1 kHz"     "$OUT/drum/ctl-norate" 
 control "drumroll: grid rate never checked"              "$OUT/drum/ctl-anyrate" "$OUT/drum/scratch"
 control "drumroll: an empty deck never follows the master" "$OUT/drum/ctl-nofollow" "$OUT/drum/scratch"
 control "drumroll: a follower judged by its own playhead"  "$OUT/drum/ctl-ownmoving" "$OUT/drum/scratch"
+control "drumroll: a stopped lead's stillness never counted" "$OUT/drum/ctl-leadstill" "$OUT/drum/scratch"
+control "drumroll: a new lead's first reading taken as motion" "$OUT/drum/ctl-leadnew" "$OUT/drum/scratch"
 control "ogg decode: resample failure -> native buffer"  "$OUT/ogg/ctl-fallback"
 control "ogg decode: max_frames ignored"                 "$OUT/ogg/ctl-nocap"
 control "vinyl save: flush does not consume the slot"     "$OUT/vsave/ctl-noclear"
@@ -4445,6 +4598,8 @@ control "stem fx: post-press audio repeats"                   "$OUT/stemfx/ctl-p
 control "stem fx: a half-written press read"                  "$OUT/stemfx/ctl-noseq"
 control "stem fx: a latch without its press's tag"            "$OUT/stemfx/ctl-notag"
 control "stem fx: no fade back in after the release"          "$OUT/stemfx/ctl-nooff"
+control "stem fx: an echo from the press cuts at the press"     "$OUT/stemfx/ctl-cutatpress"
+control "stem fx: an echo of the phrase repeats older audio"   "$OUT/stemfx/ctl-phraseall"
 if [ "$SFX_TSAN" = 1 ]; then
 control "stem fx: a plain field between the threads (TSan race)" env TSAN_OPTIONS=halt_on_error=1 "$OUT/stemfx/tsan-ctl-plain"
 fi

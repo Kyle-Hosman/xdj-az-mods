@@ -48,17 +48,19 @@ AZ_FEATURE( STEMS,             "stems",                      "Stems",           
 AZ_FEATURE( STEM_PADS_PAGE,    "stem-pads-page",             "Stems on BEAT LOOP 2",       STEMS,        AZ_ROW_CHOICE,  0,                              21,
             .pane_label = "Stem pads replace:", .d.choices = AZ_CHOICES("BEAT LOOP", "BEAT LOOP 2"),
             .d.help = "Which pad mode shows the stems. The other one keeps its loop pads.")
-/* Bottom Stem Pads: pads 5-8 on the stems page. Waveform (default) = the stem waveforms on the
- * bottom row, the pads SOLO a stem; FX = Stem FX (VOCAL ECHO, INST ECHO, INST BRAKE, DRUMS ECHO;
+/* Bottom Stem Pads: pads 5-8 on the stems page. Solo (default) = the pads SOLO a stem, with the
+ * stem waveforms on the bottom row; FX = Stem FX (VOCAL ECHO, INST ECHO, INST BRAKE, DRUMS ECHO;
  * stem_fx_pads.h, azstem stem_fx.c) with EP147's own art on the bottom row. Read live. */
 AZ_FEATURE( STEM_FX,           "stem-pads-fx",               "Bottom Stem Pads",           STEMS,        AZ_ROW_CHOICE,  0,                              -1,
-            .pane_label = "Bottom stem pads:", .d.choices = AZ_CHOICES("Waveform", "FX"),
+            .pane_label = "Bottom stem pads:", .d.choices = AZ_CHOICES("Solo", "FX"),
             .d.help = "FX: tap to latch, hold for a momentary effect.")
-/* the echo's delay, in beats of the deck's beat grid */
+/* the echo's delay, in beats of the deck's beat grid; the sign picks what repeats */
 AZ_FEATURE( STEM_FX_ECHO,      "stem-fx-echo-length",        "Echo Length",                STEM_FX,      AZ_ROW_CHOICE,  0,                              -1,
-            .pane_label = "Echo length (beats):", .d.choices = AZ_CHOICES("1/4", "1/2", "3/4", "1"),
-            .d.default_choice = 1,
-            .d.help = "The time between echoes, in beats.")
+            .pane_label = "Echo length (beats):",
+            .d.choices = AZ_CHOICES("-1", "-3/4", "-1/2", "-1/4", "1/4", "1/2", "3/4", "1"),
+            .d.default_choice = 2,
+            .d.help = "Time between repeats, in beats.\nNegative: repeats what played just before the press.\n"
+                      "Positive: repeats what plays after the press.")
 /* how long the brake takes to stop, in beats of the deck's beat grid */
 AZ_FEATURE( STEM_FX_BRAKE,     "stem-fx-brake-length",       "Brake Length",               STEM_FX,      AZ_ROW_CHOICE,  0,                              -1,
             .pane_label = "Brake length (beats):", .d.choices = AZ_CHOICES("1/2", "1", "2", "4"),

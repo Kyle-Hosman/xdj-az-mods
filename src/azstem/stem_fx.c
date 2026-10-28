@@ -13,8 +13,9 @@
 static const int SFX_STEM[SFX_N] = {0, 1, 1, 3}; /* vocals, inst, inst, drums */
 static const int SFX_KIND[SFX_N] = {SFX_ECHO, SFX_ECHO, SFX_BRAKE, SFX_ECHO};
 static sfx_slot g_sfx[NDECK][SFX_N];
-/* Effect lengths in quarter beats; written by the overlay thread, read at a press. */
-static _Atomic int g_sfx_echo_q = 2;  /* 1/2 beat */
+/* Effect lengths in quarter beats; written by the overlay thread, read at a press. A negative
+ * echo length repeats the audio before the press, a positive one the phrase from the press on. */
+static _Atomic int g_sfx_echo_q = -2; /* 1/2 beat, before the press */
 static _Atomic int g_sfx_brake_q = 8; /* 2 beats */
 static _Atomic int g_sfx_mode = 0;    /* the pads are FX pads: the grid service runs for them */
 /* Bit f set = slot f of this deck was pressed and may still sound; cleared by the flusher
@@ -46,7 +47,7 @@ static double sfx_beat(int deck) {
 /* Mode and lengths (quarter beats) from the Mod Menu. */
 void azstem_stem_fx_config(int fx_mode, int echo_q, int brake_q);
 void azstem_stem_fx_config(int fx_mode, int echo_q, int brake_q) {
-    if (echo_q >= 1 && echo_q <= 16)
+    if (echo_q != 0 && echo_q >= -16 && echo_q <= 16)
         atomic_store_explicit(&g_sfx_echo_q, echo_q, memory_order_relaxed);
     if (brake_q >= 1 && brake_q <= 64)
         atomic_store_explicit(&g_sfx_brake_q, brake_q, memory_order_relaxed);
@@ -107,9 +108,15 @@ int azstem_stem_fx(int deck, int fx, int on) {
         return 0;
     int q = SFX_KIND[fx] == SFX_BRAKE ? atomic_load_explicit(&g_sfx_brake_q, memory_order_relaxed)
                                       : atomic_load_explicit(&g_sfx_echo_q, memory_order_relaxed);
-    long long len = (long long) (beat * (double) q / 4.0 + 0.5);
+    long long len = (long long) (beat * (double) (q < 0 ? -q : q) / 4.0 + 0.5);
+    long long at = S - off;
+    int kind = SFX_KIND[fx];
+    if (kind == SFX_ECHO && q > 0) /* an echo of the phrase from the press */
+        kind = SFX_ECHO_PHRASE;
+    if (kind != SFX_BRAKE)
+        at = sfx_echo_cut(at, len, kind == SFX_ECHO_PHRASE);
     unsigned tg = atomic_load_explicit(&g_deck_trackgen[deck], memory_order_relaxed);
-    if (!sfx_press(s, SFX_KIND[fx], S - off, len, tg))
+    if (!sfx_press(s, kind, at, len, tg))
         return 0;
     atomic_fetch_or_explicit(&g_sfx_live[deck], 1u << fx, memory_order_relaxed);
     return 1;

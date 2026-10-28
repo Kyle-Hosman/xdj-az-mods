@@ -3,7 +3,8 @@
  * press state shared by the panel-bus writer and the audio readers. SFX_INC = the stem_fx.h
  * under test (the shipped copy or a control with one protection removed).
  *
- *   echo     only audio from before the press repeats, at the exact taps, with the dry fade;
+ *   echo     only audio from before the cut repeats, at the exact taps, with the dry fade; a cut
+ *            one delay after the press repeats the phrase from the press, never what came before;
  *   brake    continuous at its start, slows, never runs past its stop, silent after it;
  *   off      dry again exactly SFX_XF frames after the latched release;
  *   pages    a page rendered twice, or out of order, comes out the same;
@@ -259,10 +260,64 @@ static void test_threads(void) {
     CHECK("threads: every snapshot is one whole press", !atomic_load(&g_bad));
 }
 
+/* An echo of the phrase from the press: the cut is one delay later, the stem plays on dry until
+ * it, and what repeats is the audio from the press on, never from before it. */
+static void test_echo_from_press(void) {
+    const long long press = 50000, D = 11025;
+    CHECK("cut: before the press = the press", sfx_echo_cut(press, D, 0) == press);
+    CHECK("cut: from the press = one delay later", sfx_echo_cut(press, D, 1) == press + D);
+    memset(&g_s, 0, sizeof g_s);
+    const long long on = sfx_echo_cut(press, D, 1);
+    CHECK("press published (from the press)", sfx_press(&g_s, SFX_ECHO_PHRASE, on, D, 7));
+    sfx_snap o;
+    CHECK("read (from the press)", sfx_read(&g_s, &o, 7));
+    sfx_latch(&g_s, &o, press - 100, press + 4096); /* the page holding the press */
+    CHECK("not latched before the cut", o.start < 0);
+    sfx_latch(&g_s, &o, on - 100, on + 4096);
+    CHECK("start latched at the cut", o.start == on);
+    float L, R;
+    int ok = 1;
+    for (long long i = press; i < on; i += 31) {
+        sfx_sample(g_stem, NF, &o, i, &L, &R);
+        if (!feq(L, g_stem[i * 2]) || !feq(R, g_stem[i * 2 + 1]))
+            ok = 0;
+    }
+    CHECK("dry from the press to the cut", ok);
+    ok = 1;
+    for (long long i = on + SFX_XF; i < on + D; i += 29) {
+        sfx_sample(g_stem, NF, &o, i, &L, &R);
+        if (!feq(L, SFX_FB * g_stem[(i - D) * 2]) || !feq(R, SFX_FB * g_stem[(i - D) * 2 + 1]))
+            ok = 0;
+    }
+    CHECK("first repeat = the phrase from the press", ok);
+    ok = 1;
+    for (long long i = on + 2 * D + 7; i < on + 3 * D; i += 41) {
+        sfx_sample(g_stem, NF, &o, i, &L, &R);
+        float w = SFX_FB * SFX_FB * SFX_FB;
+        if (!feq(L, w * g_stem[(i - 3 * D) * 2]))
+            ok = 0;
+    }
+    CHECK("third repeat = the same phrase, three repeats down", ok);
+    /* audio before the press never repeats: zero everything from the press on, the tail is silent */
+    static float z[NF * 2];
+    for (long i = 0; i < press; i++) {
+        z[i * 2] = 1.0f;
+        z[i * 2 + 1] = 1.0f;
+    }
+    float mx = 0;
+    for (long long i = on + SFX_XF; i < on + 6 * D; i++) {
+        sfx_sample(z, NF, &o, i, &L, &R);
+        if (fabsf(L) > mx)
+            mx = fabsf(L);
+    }
+    CHECK("audio before the press never repeats", mx == 0.0f);
+}
+
 int main(void) {
     ut_suite = "stem fx";
     fill_ramp();
     test_echo();
+    test_echo_from_press();
     test_off();
     test_brake();
     test_pages();

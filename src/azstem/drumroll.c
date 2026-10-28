@@ -116,10 +116,16 @@ static long long g_drum_prev_src[DRUM_SIDES];
 static long long g_drum_prev_sync[DRUM_SIDES];
 /* An empty deck follows the master deck: azmod names the lead (azstem_drum_follow, -1 =
  * none), and the side's roll is placed on the lead's grid at the lead's playhead. Each
- * side's block publishes its playhead and whether it moves, for a follower to read. */
+ * side's block publishes its playhead for a follower to read. */
 static _Atomic int g_drum_follow[DRUM_SIDES] = {[0 ... DRUM_SIDES - 1] = -1};
 static _Atomic long long g_drum_src_pub[DRUM_SIDES] = {[0 ... DRUM_SIDES - 1] = -1};
-static _Atomic int g_drum_moving_pub[DRUM_SIDES];
+/* A follower judges the lead's motion itself, from the readings its own blocks see: output
+ * frames since the lead's published playhead last changed (saturating), and the lead that
+ * reading came from (-1 = none yet). A lead whose blocks stop running therefore reads as
+ * stopped after DRUM_SYNC_STALL, so a waiting first hit never hangs silent. RT only. */
+static long g_drum_lead_still[DRUM_SIDES] = {[0 ... DRUM_SIDES - 1] = DRUM_AGE_MAX};
+static int g_drum_lead_of[DRUM_SIDES] = {[0 ... DRUM_SIDES - 1] = -1};
+static long long g_drum_lead_prev[DRUM_SIDES];
 
 #define DRUM_FADE_IN 16   /* frames: kills the click on retrigger */
 #define DRUM_FADE_OUT 192 /* frames: kills the click when a hit is cut short */
@@ -1045,8 +1051,6 @@ static void drum_mix_block_in(int side, float **chans, int nch, int ns, long lon
     else if (g_drum_src_still[side] < DRUM_AGE_MAX)
         g_drum_src_still[side] += ns;
     atomic_store_explicit(&g_drum_src_pub[side], src_pos, memory_order_relaxed);
-    atomic_store_explicit(&g_drum_moving_pub[side], g_drum_src_still[side] < DRUM_SYNC_STALL,
-                          memory_order_relaxed);
     /* Whose grid and playhead place the hits: this deck's, or, for an empty deck, the master
      * deck's (its lead). The lead's playhead is the one its last block published: at most a
      * block old, and re-read on every block like a deck's own. */
@@ -1057,7 +1061,19 @@ static void drum_mix_block_in(int side, float **chans, int nch, int ns, long lon
     if (lead >= 0 && lead < DRUM_SIDES && lead != side) {
         grid_side = lead;
         sync_src = atomic_load_explicit(&g_drum_src_pub[lead], memory_order_relaxed);
-        moving = atomic_load_explicit(&g_drum_moving_pub[lead], memory_order_relaxed);
+        if (sync_src < 0)
+            g_drum_lead_still[side] = DRUM_AGE_MAX;
+        else if (g_drum_lead_of[side] != lead)
+            g_drum_lead_still[side] = DRUM_AGE_MAX; /* a new lead's first reading: no motion yet */
+        else if (sync_src != g_drum_lead_prev[side])
+            g_drum_lead_still[side] = 0;
+        else if (g_drum_lead_still[side] < DRUM_AGE_MAX)
+            g_drum_lead_still[side] += ns;
+        g_drum_lead_of[side] = sync_src < 0 ? -1 : lead;
+        g_drum_lead_prev[side] = sync_src;
+        moving = g_drum_lead_still[side] < DRUM_SYNC_STALL;
+    } else {
+        g_drum_lead_of[side] = -1;
     }
     /* The grid can place hits only on a moving deck (DRUM_SYNC_STALL). */
     int sync_ready = moving && drum_sync_grid_ready(grid_side);

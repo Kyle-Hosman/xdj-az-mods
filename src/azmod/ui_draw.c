@@ -810,10 +810,9 @@ static void c_box(const azmod_fb *fb, int x, int y, int sz, bool on, uint32_t ed
     }
 }
 
-/* A one-line description in a fixed-height row: left-aligned at x, and when wider
- * than maxw, cut at a word and ended with "..." (the menu face is drawn byte by
- * byte, so three dots, not the U+2026 glyph). Never wraps: the rows have one line
- * for it. Every pane description goes through here. */
+/* A one-line text in a fixed-height place: left-aligned at x, and when wider than maxw, cut at
+ * a word and ended with "..." (the menu face is drawn byte by byte, so three dots, not the
+ * U+2026 glyph). Descriptions never go through here: they wrap (c_wrap). */
 /* s fitted to maxw into t: unchanged, or cut at a word + "..." (returns its width) */
 static int c_fit_str(char *t, size_t tn, const char *s, int px, int maxw) {
     int n = (int) strlen(s);
@@ -840,28 +839,99 @@ static int c_fit_str(char *t, size_t tn, const char *s, int px, int maxw) {
     memcpy(t + cut, "...", 4);
     return azmod_ttf_menu_width(t, (int) strlen(t), px, 2);
 }
-static void c_text_fit(const azmod_fb *fb, int x, int y, int maxw, int h, const char *s, int px,
-                       uint32_t c) {
-    char t[256];
-    c_fit_str(t, sizeof t, s, px, maxw);
-    c_text(fb, x, y, 0, h, t, px, c);
-}
-static void c_draw_lines(const azmod_fb *fb, int x, int y, const char *t, int px, int lh,
-                         uint32_t c, int maxw) {
-    char line[160];
-    while (*t) {
-        const char *e = strchr(t, '\n');
-        int len = e ? (int) (e - t) : (int) strlen(t);
-        if (len > (int) sizeof line - 1)
-            len = sizeof line - 1;
-        memcpy(line, t, len);
-        line[len] = 0;
-        c_text_fit(fb, x, y, maxw, lh, line, px, c);
-        y += lh;
-        t += len;
-        if (*t == '\n')
-            t++;
+/* A description word-wrapped to maxw at px: each '\n' ends a line, and a line breaks at the
+ * last space that keeps it within maxw. A word wider than maxw on its own is broken between
+ * bytes at the longest part that fits (never inside a UTF-8 sequence, at least one character
+ * a line), so no text is ever dropped. line(arg, start, len) is called for each line when it is
+ * not NULL; the return is the number of lines (0 for an empty text). Without the face's width
+ * a line breaks only at '\n'. A line is at most C_WRAP_MAX bytes (the draw's buffer). */
+#define C_WRAP_MAX 255
+static int c_wrap(const char *s, int px, int maxw, void (*line)(void *, const char *, int),
+                  void *arg) {
+    int n = 0;
+    bool measure = azmod_ttf_menu_width && maxw > 0;
+    if (!s)
+        return 0;
+    while (*s) {
+        const char *e = strchr(s, '\n');
+        int len = e ? (int) (e - s) : (int) strlen(s);
+        const char *p = s;
+        int rem = len;
+        do { /* the paragraph [s, s + len), one line a pass */
+            int take = rem > C_WRAP_MAX ? C_WRAP_MAX : rem;
+            if (measure && azmod_ttf_menu_width(p, take, px, 2) > maxw) {
+                int cut = 0;
+                for (int i = 1; i < take; i++)
+                    if (p[i] == ' ') {
+                        if (azmod_ttf_menu_width(p, i, px, 2) > maxw)
+                            break; /* wider only grows: no later space fits */
+                        cut = i;
+                    }
+                if (!cut) { /* one word wider than the line: as many bytes as fit */
+                    cut = 1;
+                    while (cut < take && azmod_ttf_menu_width(p, cut + 1, px, 2) <= maxw)
+                        cut++;
+                    while (cut < take && ((unsigned char) p[cut] & 0xc0) == 0x80)
+                        cut++; /* finish the character rather than split it */
+                }
+                take = cut;
+            }
+            if (line)
+                line(arg, p, take);
+            n++;
+            p += take;
+            rem -= take;
+            while (rem > 0 && *p == ' ') { /* the break's spaces start no line */
+                p++;
+                rem--;
+            }
+        } while (rem > 0);
+        s += len;
+        if (*s == '\n')
+            s++;
     }
+    return n;
+}
+/* c_wrap's line count, kept per text, size and width: the layout asks for every row's on
+ * every frame (the rows stack by their heights). The menu is drawn and laid out on one thread. */
+static int c_wrap_n(const char *s, int px, int maxw) {
+    static struct {
+        unsigned long long key;
+        int n;
+    } memo[64];
+    if (!s || !*s)
+        return 0;
+    unsigned long long key = 1469598103934665603ull; /* FNV-1a over the text, then the sizes */
+    for (const char *p = s; *p; p++)
+        key = (key ^ (unsigned char) *p) * 1099511628211ull;
+    key = (key ^ (unsigned) px) * 1099511628211ull;
+    key = (key ^ (unsigned) maxw) * 1099511628211ull;
+    key = (key ^ (azmod_ttf_menu_width ? 1u : 0u)) * 1099511628211ull;
+    unsigned slot = (unsigned) (key % 64);
+    if (!key || memo[slot].key != key) {
+        memo[slot].key = key;
+        memo[slot].n = c_wrap(s, px, maxw, NULL, NULL);
+    }
+    return memo[slot].n;
+}
+struct c_wrap_draw {
+    const azmod_fb *fb;
+    int x, y, px, lh;
+    uint32_t c;
+};
+static void c_wrap_line(void *arg, const char *t, int len) {
+    struct c_wrap_draw *d = arg;
+    char line[C_WRAP_MAX + 1];
+    memcpy(line, t, (size_t) len);
+    line[len] = 0;
+    c_text(d->fb, d->x, d->y, 0, d->lh, line, d->px, d->c);
+    d->y += d->lh;
+}
+/* a description at (x, y), wrapped to maxw, one line every lh: returns its lines */
+static int c_draw_wrapped(const azmod_fb *fb, int x, int y, const char *t, int px, int lh,
+                          uint32_t c, int maxw) {
+    struct c_wrap_draw d = {fb, x, y, px, lh, c};
+    return c_wrap(t, px, maxw, c_wrap_line, &d);
 }
 
 /* Alpha-blend `c` over the pixel at (x,y) with 0..255 coverage. */

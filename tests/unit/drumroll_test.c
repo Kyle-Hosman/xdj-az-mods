@@ -702,6 +702,47 @@ static void test_follow(void) {
     azstem_drum_gate(1, 0);
     for (int b = 0; b < 8; b++)
         mix_block(1, -1);
+
+    /* the master's blocks stop running while the follower waits for its boundary: the
+     * follower sees the lead's playhead stand still and, after the stall window, fires */
+    azstem_drum_follow(1, 0);
+    for (int b = 0; b < 8; b++, pos += MIX_NS) {
+        mix_block(0, pos);
+        mix_block(1, -1);
+    }
+    mix_press(1, 2);
+    int fired = -1;
+    for (int b = 0; b < 40 && fired < 0; b++)
+        if (mix_block(1, -1) > 0.4f)
+            fired = b;
+    CHECK("master's blocks stopped: setup: the press waited for the master's grid", fired != 0);
+    CHECK("...and the first hit sounds within the stall window, never hangs silent",
+          fired > 0 && (long) fired * MIX_NS <= DRUM_SYNC_STALL + MIX_NS);
+    azstem_drum_gate(1, 0);
+
+    /* follow set on a master that moved, then paused, while nobody followed it: the
+     * follower's first reading of a new lead (one block before the press) is no evidence
+     * of motion, so the press fires at once instead of waiting out the stall window */
+    azstem_drum_follow(1, -1);
+    for (int b = 0; b < 4; b++, pos += MIX_NS) {
+        mix_block(0, pos);
+        mix_block(1, -1);
+    }
+    for (int b = 0; b < 20; b++) {
+        mix_block(0, pos);
+        mix_block(1, -1);
+    }
+    azstem_drum_follow(1, 0);
+    mix_block(0, pos);
+    mix_block(1, -1);
+    mix_press(1, 2);
+    mix_block(0, pos);
+    CHECK("follow set on a paused master, pressed at once: the first hit sounds at once",
+          mix_block(1, -1) > 0.4f);
+    azstem_drum_gate(1, 0);
+    azstem_drum_follow(1, -1);
+    for (int b = 0; b < 8; b++)
+        mix_block(1, -1);
 }
 
 /* ---- the native grid: its sample rate measured from its own tempo field ----

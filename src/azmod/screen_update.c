@@ -6,7 +6,7 @@
  * "Installed: vX", line 2 the state, a failure's reason merged in), the button on
  * the right, centered on the two lines; a third row under them for the progress bar,
  * always reserved so the changelog under it never jumps. Every left string is cut
- * to end a gap before the button (c_text_fit). One geometry function, shared by the
+ * to end a gap before the button (c_fit_str). One geometry function, shared by the
  * draw, the touch test and the changelog box. */
 static int upd_text_px(const azmod_fb *fb) {
     return menu_text_px(fb);

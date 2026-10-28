@@ -23,8 +23,8 @@ the table and `features.def` disagree.
 |---|---|---|---|---|
 | `stems` | Stems | toggle | - | 0 = off, 1 = on |
 | `stem-pads-page` | Stems on BEAT LOOP 2 | choice | stems | 0 = "BEAT LOOP", 1 = "BEAT LOOP 2" |
-| `stem-pads-fx` | Bottom Stem Pads | choice | stems | 0 = "Waveform", 1 = "FX" |
-| `stem-fx-echo-length` | Echo Length | choice | stem-pads-fx | 0 = "1/4", 1 = "1/2", 2 = "3/4", 3 = "1" |
+| `stem-pads-fx` | Bottom Stem Pads | choice | stems | 0 = "Solo", 1 = "FX" |
+| `stem-fx-echo-length` | Echo Length | choice | stem-pads-fx | 0 = "-1", 1 = "-3/4", 2 = "-1/2", 3 = "-1/4", 4 = "1/4", 5 = "1/2", 6 = "3/4", 7 = "1" |
 | `stem-fx-brake-length` | Brake Length | choice | stem-pads-fx | 0 = "1/2", 1 = "1", 2 = "2", 3 = "4" |
 | `remote-stems` | Remote Stems | toggle | stems | 0 = off, 1 = on |
 | `stem-marks` | Stem Marks | toggle | stems | 0 = off, 1 = on |

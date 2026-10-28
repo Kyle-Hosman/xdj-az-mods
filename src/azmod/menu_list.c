@@ -71,6 +71,71 @@ static bool item_is_top(int i) {
 static bool item_is_bank(int i) {
     return az_n_choices(i) > 2;
 }
+/* A string's width in the menu face at px (0 without the face). The layout below asks for the
+ * same few strings (a row's label, its buttons' values) on every frame, so each answer is kept,
+ * keyed by the text and the size. */
+static int menu_text_w(const char *s, int px) {
+    static struct {
+        unsigned long long key;
+        int w;
+    } memo[64];
+    if (!azmod_ttf_menu_width || !s)
+        return 0;
+    unsigned long long key = 1469598103934665603ull; /* FNV-1a over the text, then the size */
+    for (const char *p = s; *p; p++)
+        key = (key ^ (unsigned char) *p) * 1099511628211ull;
+    key = (key ^ (unsigned) px) * 1099511628211ull;
+    unsigned slot = (unsigned) (key % 64);
+    if (!key || memo[slot].key != key) {
+        memo[slot].key = key;
+        memo[slot].w = azmod_ttf_menu_width(s, (int) strlen(s), px, 2);
+    }
+    return memo[slot].w;
+}
+/* The width of every button of CHOICE row i when they are h tall and at least w0 wide: w0, or
+ * wider so the row's longest value reads at the buttons' own text size (c_btn_px: 40% of the
+ * height, a quarter of the width left as margin) instead of shrinking. One width for the row. */
+static int item_btn_w(int i, int w0, int h) {
+    int w = w0, px = h * 40 / 100;
+    for (int b = 0; b < az_n_choices(i); b++) {
+        int tw = menu_text_w(az_choice_label(i, b), px);
+        if (tw + tw / 3 > w)
+            w = tw + tw / 3;
+        while (w - w / 4 < tw)
+            w++;
+    }
+    return w;
+}
+/* The compact list's bank row (item_is_bank): where its tiles go, and how wide. At the normal
+ * height they follow the label on its line; a row whose tiles would run past the row's right end
+ * there is TALL (item_bank_tall): twice the row height, the tiles on a line of their own under
+ * the label, as wide as that line allows. */
+static int item_row_right(const azmod_fb *fb, int rowh) {
+    return menu_bx(fb) + (g_docked ? dock_w(fb) : menu_content_w(fb)) - rowh / 3;
+}
+static void item_bank_line(const azmod_fb *fb, int i, int rowh, bool tall, int *x0, int *side,
+                           int *bw, int *gap) {
+    int sc = fb->h / 220, n = az_n_choices(i);
+    if (sc < 1)
+        sc = 1; /* draw_text scale, as the composite uses */
+    int lx = menu_bx(fb) + fb->w / 12 + az_depth(i) * (fb->w / 26);
+    *side = rowh - rowh / 4;
+    *gap = rowh / 3;
+    *bw = item_btn_w(i, *side, *side);
+    *x0 = tall ? lx
+               : menu_bx(fb) + fb->w / 12 + fb->w / 26 + ((int) strlen(az_pane_label(i)) + 1) * 6 * sc;
+    if (tall && n > 0 && n * *bw + (n - 1) * *gap > item_row_right(fb, rowh) - lx) {
+        int fit = (item_row_right(fb, rowh) - lx - (n - 1) * *gap) / n;
+        *bw = fit > 1 ? fit : 1;
+    }
+}
+static bool item_bank_tall(const azmod_fb *fb, int i, int rowh) {
+    if (!item_is_bank(i))
+        return false;
+    int x0, side, bw, gap, n = az_n_choices(i);
+    item_bank_line(fb, i, rowh, false, &x0, &side, &bw, &gap);
+    return x0 + n * bw + (n - 1) * gap > item_row_right(fb, rowh);
+}
 /* Item i's visual row, and how many group gaps sit above it: every top-level
  * option after the first starts a new group with a small gap, so each option's
  * sub-items read as grouped with it. */
@@ -113,10 +178,12 @@ void azmod_item_rect(const azmod_fb *fb, int i, int *x, int *y, int *w, int *h) 
     int bx = menu_bx(fb), bw = g_docked ? dock_w(fb) : menu_content_w(fb);
     *x = bx;
     *w = bw;
-    *h = rowh;
-    int gaps;
+    *h = item_bank_tall(fb, i, rowh) ? 2 * rowh : rowh;
+    int gaps, ord[AZI_COUNT], n = menu_order(ord), tall = 0;
     int row = item_slot(i, &gaps);
-    *y = menu_by(fb) + menu_hdrh(fb) + rowh * row +
+    for (int p = 0; p < n && ord[p] != i; p++) /* the tall rows above take a second row each */
+        tall += !item_hidden(ord[p]) && item_bank_tall(fb, ord[p], rowh);
+    *y = menu_by(fb) + menu_hdrh(fb) + rowh * (row + tall) +
          gaps * (rowh / 4) - g_cscroll; /* below the header; group gaps; the scroll */
 }
 /* the compact list's viewport: under the header, to the bottom of the screen (or the pane) */
@@ -180,18 +247,16 @@ static void c_cshow(const azmod_fb *fb, int i) {
         g_cscroll += y + h - bot;
     c_cclamp(fb);
 }
-/* Button b of a bank row (item_is_bank) in the compact list: square tiles after the
- * indented label and one space. */
+/* Button b of a bank row (item_is_bank) in the compact list: tiles after the indented label and
+ * one space, square unless a value needs more width (item_btn_w); in a tall row, on the second
+ * line from the label's left edge (item_bank_line). */
 static void item_bank_rect(const azmod_fb *fb, int i, int b, int *x, int *y, int *w, int *h) {
     azmod_item_rect(fb, i, x, y, w, h);
-    int rowh = *h, sc = fb->h / 220;
-    if (sc < 1)
-        sc = 1; /* draw_text scale, as the composite uses */
-    int x0 = menu_bx(fb) + fb->w / 12 + fb->w / 26 + ((int) strlen(az_pane_label(i)) + 1) * 6 * sc;
-    int side = rowh - rowh / 4, gap = rowh / 3;
-    *x = x0 + b * (side + gap);
-    *w = side; /* square tiles */
-    *y += rowh / 8;
+    int rowh = menu_rowh(fb), tall = *h > rowh, x0, side, bw, gap;
+    item_bank_line(fb, i, rowh, tall, &x0, &side, &bw, &gap);
+    *x = x0 + b * (bw + gap);
+    *w = bw;
+    *y += (tall ? rowh : 0) + rowh / 8;
     *h = side;
 }
 
@@ -235,7 +300,7 @@ static void draw_bank_button(azmod_state *s, const azmod_fb *fb, int i, int scal
     { /* the row, once: its highlight and its label, indented under its parent */
         int rx = menu_bx(fb), rw = g_docked ? dock_w(fb) : menu_content_w(fb);
         if (row_hi)
-            fill_rect(fb, rx, ry, rw, rowh, C_HI);
+            fill_rect(fb, rx, ry, rw, rh0, C_HI); /* a tall row's second line too */
         draw_text(fb, rx + fb->w / 12 + az_depth(i) * (fb->w / 26), ry + (rowh - 7 * scale) / 2,
                   az_pane_label(i), scale, row_hi ? C_HI_TEXT : (active ? C_TEXT : C_STEM_OFF_FG));
     }

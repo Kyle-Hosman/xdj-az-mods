@@ -1113,9 +1113,21 @@ static void ofs_correlate(const deck_stems *dk, long lim, const float *x, long l
             bl = l;
         }
     }
-    for (int l = -LD; l <= LD; l++)
-        if (abs(l - bl) > 2 && cc[l + LD] > second)
-            second = cc[l + LD];
+    /* The runner-up is the best lag outside the peak's own lobe: the lags reached by
+     * walking down from the peak while the correlation keeps falling. Bass-heavy audio
+     * has a lobe many bins wide, and its shoulder is the same alignment, not a rival.
+     * A peak on the edge of the window may continue past it, so it has no lead. */
+    int lo = bl, hi = bl;
+    while (lo > -LD && cc[lo - 1 + LD] <= cc[lo + LD])
+        lo--;
+    while (hi < LD && cc[hi + 1 + LD] <= cc[hi + LD])
+        hi++;
+    if (bl == -LD || bl == LD)
+        second = best;
+    else
+        for (int l = -LD; l <= LD; l++)
+            if ((l < lo || l > hi) && cc[l + LD] > second)
+                second = cc[l + LD];
     /* fine: full rate around the coarse peak; stem[base + i - lag] = sw[i - lag + OFS_LAGMAX +
      * OFS_PAD]
      * (|lag| <= OFS_LAGMAX + 2*OFS_DEC <= OFS_LAGMAX + OFS_PAD keeps the index in range) */

@@ -8,9 +8,10 @@
  * times. The injection is pre-DSP: lengths are source samples, and EP147's own tempo, key lock
  * and scratch then apply to the effect as they apply to the stems.
  *
- *   echo   from the press on, only audio from BEFORE the press repeats: out(i) = sum over m >= 1
- *          of FB^m * stem[i - m*D], for the taps where i - m*D lies before the press index, until
- *          FB^m falls below -60 dB. The dry stem fades out over SFX_XF frames.
+ *   echo   from the cut on, only audio from BEFORE the cut repeats: out(i) = sum over m >= 1
+ *          of FB^m * stem[i - m*D], for the taps where i - m*D lies before the cut index, until
+ *          FB^m falls below -60 dB. The dry stem fades out over SFX_XF frames. An echo of the
+ *          phrase (SFX_ECHO_PHRASE) takes only the taps in the one delay before the cut.
  *   brake  the read position slows to a stop over T samples: p(u) = s + u - u^2 / (2T) for
  *          u = i - s < T (linear interpolation between samples), then silence. The last quarter
  *          fades to zero, since a held sample is DC.
@@ -18,7 +19,8 @@
  *          fades out.
  *
  * Positions (stem frames, i.e. source index minus the measured stem offset):
- *   on     the playhead at the press: the echo's cut point.
+ *   on     the echo's cut point (sfx_echo_cut): the playhead at the press, or one echo later
+ *          for an echo of the phrase that starts at the press. The brake starts at the press.
  *   start  the first index the injection rendered at or after `on` (latched by the reader that
  *          rendered it). Pages already rendered before the press stay dry, so the fades start
  *          here and not at `on`, which may lie in a page that has already played.
@@ -46,14 +48,15 @@
 
 enum {
     SFX_ECHO = 1,
-    SFX_BRAKE = 2
+    SFX_BRAKE = 2,
+    SFX_ECHO_PHRASE = 3 /* an echo of the one delay before the cut only */
 };
 
 /* One effect slot of one deck. */
 typedef struct {
     _Atomic unsigned seq;       /* even = stable, odd = the writer is mid-update */
     _Atomic unsigned gen;       /* press count: bumped by every press, low 16 bits tag latches */
-    _Atomic int kind;           /* 0 = none, SFX_ECHO, SFX_BRAKE */
+    _Atomic int kind;           /* 0 = none, SFX_ECHO, SFX_BRAKE, SFX_ECHO_PHRASE */
     _Atomic long long on;       /* playhead at the press */
     _Atomic long long offq;     /* playhead at the release, -1 = still on */
     _Atomic long long len;      /* echo delay or brake length, frames (>= 1) */
@@ -98,6 +101,12 @@ static inline int sfx_begin(sfx_slot *s, unsigned *q) {
 }
 static inline void sfx_end(sfx_slot *s, unsigned q) {
     atomic_store_explicit(&s->seq, q + 2, memory_order_release); /* -> even, after every field */
+}
+/* The echo's cut for a press at playhead `at` with delay `len`: at the press, so the audio before
+ * it repeats, or `len` later for an echo of the phrase that starts at the press (SFX_ECHO_PHRASE:
+ * it plays once dry, then only it repeats). */
+static inline long long sfx_echo_cut(long long at, long long len, int from_press) {
+    return from_press ? at + len : at;
 }
 /* A press at playhead `on` on track generation `tg`. 1 = published. */
 static inline int sfx_press(sfx_slot *s, int kind, long long on, long long len, unsigned tg) {
@@ -201,6 +210,7 @@ static inline void sfx_echo_wet(const float *g, long nf, const sfx_snap *o, long
                                 float *R) {
     float l = 0.f, r = 0.f;
     long long D = o->len;
+    long long lo = o->kind == SFX_ECHO_PHRASE ? o->on - D : 0; /* the first index that repeats */
     long long m = (i - o->on) / D + 1; /* the first tap that lands before the press */
     if (i < o->on)
         m = 1;
@@ -213,7 +223,7 @@ static inline void sfx_echo_wet(const float *g, long nf, const sfx_snap *o, long
         w *= SFX_FB;
     for (; m <= SFX_TAPS; m++, w *= SFX_FB) {
         long long j = i - m * D;
-        if (j < 0)
+        if (j < lo)
             break;
         if (j < nf) {
             l += w * g[j * 2];
@@ -265,7 +275,7 @@ static inline void sfx_sample(const float *g, long nf, const sfx_snap *o, long l
     else
         sfx_echo_wet(g, nf, o, i, &wL, &wR);
     float w = 1.f; /* the effect's share */
-    if (o->kind == SFX_ECHO) {
+    if (o->kind != SFX_BRAKE) {
         long long u = i - o->start + 1;
         if (u < SFX_XF)
             w = (float) u / (float) SFX_XF;

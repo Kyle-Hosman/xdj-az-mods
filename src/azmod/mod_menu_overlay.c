@@ -1379,16 +1379,16 @@ static void ov_resolve_drum_exports(void) {
  * change, and each deck's on bits for the LEDs. Overlay thread. */
 static void ov_sync_stem_fx(void) {
     static int last = -1;
-    static const int ECHO_Q[4] = {1, 2, 3, 4};  /* quarter beats */
+    static const int ECHO_Q[8] = {-4, -3, -2, -1, 1, 2, 3, 4}; /* quarter beats; < 0 before the press */
     static const int BRAKE_Q[4] = {2, 4, 8, 16};
     int mode = az_on(AZF_STEMS) && az_get(AZF_STEM_FX) == 1 && g_sfx_fn && g_sfx_on_fn &&
                g_sfx_config_fn;
     int e = az_get(AZF_STEM_FX_ECHO), b = az_get(AZF_STEM_FX_BRAKE);
-    int key = mode | (e & 3) << 1 | (b & 3) << 3;
+    int key = mode | (e & 7) << 1 | (b & 3) << 4;
     if (key != last) {
         last = key;
         if (g_sfx_config_fn)
-            g_sfx_config_fn(mode, ECHO_Q[e & 3], BRAKE_Q[b & 3]);
+            g_sfx_config_fn(mode, ECHO_Q[e & 7], BRAKE_Q[b & 3]);
         __atomic_store_n(&g_stemfx_pads, mode, __ATOMIC_RELEASE);
     }
     g_sfx_led_mode = mode;
