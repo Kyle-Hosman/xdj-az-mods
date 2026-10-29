@@ -241,6 +241,14 @@ static int drum_feed_lead(int d, double live, int master, int master_ok, double 
         return -1;
     return drum_feed_bpm(d, live, master, master_ok, master_live) > 0.0f ? master : -1;
 }
+/* The deck a roll pressed while deck d is not playing locks to (azstem_drum_follow_paused):
+ * the master deck while `on` (Paused Deck = Master), when it is known, is not d, and has a
+ * valid BPM (the roll takes its BPM too); anything else -1, d's own grid and BPM. */
+static int drum_feed_paused_lead(int d, int master, int master_ok, double master_live, int on) {
+    if (!on || master < 0 || master >= AZMOD_STEM_DECKS || master == d || !master_ok)
+        return -1;
+    return (master_live > 20.0 && master_live < 400.0) ? master : -1;
+}
 
 /* Master deck: MasterPlayer::onExchangedMasterPost(SyncMemberID) 0xaabb78 runs when the master
  * changes; word 0 of its argument = {u32 1, u32 deck} (0xfffe = none). Inline-hooked: other

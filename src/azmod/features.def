@@ -92,6 +92,12 @@ AZ_FEATURE( DRUM_ROLL,         "drum-roll",                  "Drum Roll",       
 AZ_FEATURE( DRUM_BANK,         "drum-roll-bank",             "Bank",                       DRUM_ROLL,    AZ_ROW_CHOICE,  0,                              7,
             .radio_n = 4, .d.choices = AZ_CHOICES("1", "2", "3", "4"),
             .d.help = "Which DRUM ROLLS bank on the USB plays.")
+/* what a roll pressed on a deck that is not playing locks to: 0 = the master deck's beat
+ * (drum_feed_paused_lead, azstem_drum_follow_paused), 1 = the loaded track's tempo. Read live. */
+AZ_FEATURE( DRUM_PAUSED,       "drum-roll-paused-deck",      "Paused Deck",                DRUM_ROLL,    AZ_ROW_CHOICE,  0,                              -1,
+            .pane_label = "A paused deck's roll follows:", .d.choices = AZ_CHOICES("Master", "Own Track"),
+            .d.help = "Master: a roll on a deck that isn't playing locks to the master deck's beat.\n"
+                      "Own Track: it keeps the loaded track's tempo.")
 /* roll hits lock to the beat grid; locked on in a release build, with no row */
 AZ_FEATURE( BEAT_SYNC,         "drum-roll-beat-sync",        "Beat Sync",                  DRUM_ROLL,    AZ_ROW_TOGGLE,  AZF_RELEASE_LOCKED_ON,          11)
 

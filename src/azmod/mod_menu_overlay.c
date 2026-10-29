@@ -1359,6 +1359,8 @@ static void ov_resolve_drum_exports(void) {
     *(void **) &g_drum_bpm_fn = dlsym(RTLD_DEFAULT, "azstem_drum_bpm");
     /* absent in older azstem: an empty deck rolls at the master's BPM, off its beat */
     *(void **) &g_drum_follow_fn = dlsym(RTLD_DEFAULT, "azstem_drum_follow");
+    /* absent in older azstem: a paused deck with a track rolls at its own tempo */
+    *(void **) &g_drum_follow_paused_fn = dlsym(RTLD_DEFAULT, "azstem_drum_follow_paused");
     *(void **) &g_drum_sync_fn = dlsym(RTLD_DEFAULT, "azstem_drum_sync");
     __atomic_store_n((void **) &g_drum_tone_fn,
                      dlsym(RTLD_DEFAULT, "azstem_drum_tone"), /* read by the bus */
@@ -1469,10 +1471,13 @@ static void ov_feed_drum_bpm(void) {
      *    fixed point. drum_feed_bpm sends an empty deck the MASTER deck's BPM, and
      *    anything else outside 20..400 BPM as 0.0f, drumroll.c's "unknown" (120).
      *  - The same empty deck is told to follow the master (drum_feed_lead): its roll is then
-     *    placed on the master's beat grid, at the master's playhead. */
+     *    placed on the master's beat grid, at the master's playhead.
+     *  - Every other deck is told which deck a roll pressed while it is not playing locks to
+     *    (drum_feed_paused_lead): the master while Paused Deck = Master, else none. */
     static unsigned btk = 0;
     static float last_bpm[AZMOD_STEM_DECKS] = {0};
     static int last_lead[AZMOD_STEM_DECKS] = {[0 ... AZMOD_STEM_DECKS - 1] = -1};
+    static int last_plead[AZMOD_STEM_DECKS] = {[0 ... AZMOD_STEM_DECKS - 1] = -1};
     if (g_drum_bpm_fn && (btk++ & 7u) == 0) {
         double live[AZMOD_STEM_DECKS];
         int ok[AZMOD_STEM_DECKS] = {0};
@@ -1480,6 +1485,7 @@ static void ov_feed_drum_bpm(void) {
             ok[d] = bpmstate_read(d, &live[d], NULL); /* 0: unknown, send nothing */
         int m = __atomic_load_n(&g_master_deck, __ATOMIC_RELAXED);
         int m_ok = m >= 0 && m < AZMOD_STEM_DECKS && ok[m];
+        int p_on = az_get(AZF_DRUM_PAUSED) == 0;
         for (int d = 0; d < AZMOD_STEM_DECKS; d++) {
             if (!ok[d])
                 continue;
@@ -1495,6 +1501,19 @@ static void ov_feed_drum_bpm(void) {
                     else
                         fprintf(lf, "follow: deck%d -> deck%d (master)\n", d + 1, lead + 1);
                     fclose(lf);
+                }
+            }
+            int plead = drum_feed_paused_lead(d, m, m_ok, m_ok ? live[m] : 0.0, p_on);
+            if (g_drum_follow_paused_fn && plead != last_plead[d]) {
+                last_plead[d] = plead;
+                g_drum_follow_paused_fn(d, plead);
+                FILE *pf = azlog_open("/tmp/azmod-drumbpm.log", "a");
+                if (pf) {
+                    if (plead < 0)
+                        fprintf(pf, "paused: deck%d -> its own track\n", d + 1);
+                    else
+                        fprintf(pf, "paused: deck%d -> deck%d (master)\n", d + 1, plead + 1);
+                    fclose(pf);
                 }
             }
             if (bpm != last_bpm[d]) {
