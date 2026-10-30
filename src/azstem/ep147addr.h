@@ -108,8 +108,8 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x210edf0,   /* hand: RTTI: slot 0 (complete-object destructor) of the vtable whose type_info names N3gui9 */
     0x2371890,   /* hand: masked code signature (12 words, unique) and 6/6 sampled callers agree; the function */
     0x2933258,   /* vtable N6pcmbuf7pagebuf10PageBufferINS0_23DefaultPageStaticConfigEEE +0x0 | xref 3/3 agree */
-    0x2a9cfa8,   /* vtable N4meow21UpdatableSharedObjectIN14appnd_trk_info8BeatGridEEE +0x0 | xref 6/6 agree */
-    0x2ae4df8,   /* vtable N14appnd_trk_info8BeatGrid7ContentE +0x0 | xref 4/4 agree */
+    0x2a9cfa8,   /* hand: meow::UpdatableSharedObject<appnd_trk_info::BeatGrid> vtable (vtable relocation, RTT */
+    0x2ae4df8,   /* hand: appnd_trk_info::BeatGrid::Content vtable (vtable relocation, RTTI) */
     0x2b05708,   /* vtable N11time_domain26CascadedTimeStretchManagerE +0x0 | xref 2/2 agree */
     0x2b06dd0,   /* vtable N11time_domain14KeyControlFGPRE +0x0 | xref 2/2 agree */
     0x2b07de8,   /* vtable N11time_domain11TimeStretchE +0x90 */

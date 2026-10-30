@@ -59,7 +59,8 @@
 #                ruler only from a known phase (the master's never in its own lane), read
 #                countdowns only behind checked blocks, are red under four bars, and put the stock
 #                lanes back; Top: only on a table it fits, its rulers only from known phases,
-#                panels, boxes and frames put back
+#                panels, boxes and frames put back; Compact Track Info: the strip sent home,
+#                the render height capped, only ours put back
 #   wave identity  waveform stem scaling and the stem-lane zoom model keyed by the rendering deck
 #                (update() or the Content table): unknown = drawn stock and no model, never another
 #                deck's; two decks' providers at one address keep separate models (waveform.c)
@@ -1613,18 +1614,27 @@ pm4_wiring() { # $1 = extras.c
     grep -q '^#define PM_CUE_NEAR 15 ' "$1" ||
         { echo "FAIL  pm4 wiring: the countdown is not red under four bars"; return 1; }
     p=$(extract "$1" '^static void pl_tick4\(')
-    extract "$1" '^static void pl_table4\(' | grep -q 'w\[0\] = g_pl_stock4\[0\] - (lay ? PM4_SHIFT : 0);' &&
-        grep -q 'pl_move(pl_kid(fw, PM4_CDW_VT, 0), lay != 0, -4000, 0, 0);' <<<"$p" ||
+    extract "$1" '^static void pl_layout4\(' | grep -q 'L->f = s\[0\];' &&
+        grep -q 'pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter != 0, -4000, 0, 0);' <<<"$p" ||
         { echo "FAIL  pm4 wiring: the stock lanes or EP147's countdown not put back"; return 1; }
-    # Top: only on a table it fits; the panels and number boxes, their children and frames back
-    perl -0ne 'exit !/int fits = tb\[2\]\[4\] \+ tb\[2\]\[0\] <= g_pl_stock4\[4\] \+ g_pl_stock4\[0\];\n\s*for \(int i = 1; i < 4; i\+\+\)\n\s*fits = fits && g_pl_stock4\[1 \+ i\] - g_pl_stock4\[i\] >= PM4T_PITCH;/' <<<"$p" &&
-        grep -q 'int lay = on ? (pm4_top() ? (fits ? 2 : 0) : 1) : 0;' <<<"$p" ||
-        { echo "FAIL  pm4 wiring: Top laid out on a table it does not fit"; return 1; }
+    # Top and Compact Track Info only on a table they fit
+    perl -0ne 'exit !/fits = fits && g_pl_stock4\[1 \+ i\] - g_pl_stock4\[i\] >= PM4T_PITCH;\n\s*if \(!fits && \(meter == 2 \|\| compact\)\)/' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: Top or Compact Track Info laid out on a table it does not fit"; return 1; }
+    # the strip in WAVEFORM only while 4 DECK shows with the row on; home to BrowseView otherwise
+    grep -q 'int compact = on4 && have;' <<<"$p" && grep -q 'ci_place(v, compact);' <<<"$p" &&
+        extract "$1" '^static void ci_place\(' | perl -0ne 'exit !/if \(ci_ok\(s, CI_STRIP_VT\) && cur != g_ci.par && ci_ok\(g_ci.par, CI_BROWSE_VT\)\) \{\n[^\n]*\n[^\n]*\n\s*\(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);/' ||
+        { echo "FAIL  pm4 wiring: the deck strip not sent home to BROWSE"; return 1; }
+    # a lane box: render height capped by its waveform widget; only what is still ours goes back
+    p=$(extract "$1" '^static void pl_lane\(')
+    perl -0ne 'exit !/if \(render > dwh - CI_RENDER_LESS\)\n\s*render = dwh - CI_RENDER_LESS;/' <<<"$p" &&
+        grep -q 'if (g_pl_box\[i\].mine && \*(volatile int \*) (o + OD_RENDER_H) == g_pl_box\[i\].mine)' <<<"$p" &&
+        grep -q 'int still = g_pl_box\[i\].h && \*(volatile int \*) (box + 0x2c) == g_pl_box\[i\].h;' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a lane's render height uncapped, or EP147's own geometry overwritten"; return 1; }
     p=$(extract "$1" '^static void pl_squeeze\(')
-    perl -0ne 'exit !/if \(!top\) \{\n\s*if \(art\)\n\s*pl_yscale\(x, 1.0f\);\n\s*pl_restore\(x\);/' <<<"$p" &&
+    perl -0ne 'exit !/if \(!on\) \{\n\s*if \(art\)\n\s*pl_yscale\(x, 1.0f\);\n\s*pl_restore\(x\);/' <<<"$p" &&
         perl -0ne 'exit !/\} else\n\s*pl_restore\(c\);/' <<<"$p" &&
-        grep -q 'top = top && j < 4 && s\[3\] > PM4T_PANEL;' <<<"$p" ||
-        { echo "FAIL  pm4 wiring: a Top panel, its children or its frame not put back"; return 1; }
+        grep -q 'on = on && j < 4 && s\[3\] > 40;' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a moved panel, its children or its frame not put back"; return 1; }
     # Top rows: a deck's ruler only from its known phase
     p=$(extract "$1" '^static void pm4_paint_top\(')
     perl -0ne 'exit !/if \(pm_local_phase\(d, &oph\)\)\n\s*pm_ruler_at\(g, oph,/' <<<"$p" ||
@@ -1637,13 +1647,16 @@ elif pm4_wiring guest/azmod/extras.c; then
 else failures=$((failures + 1)); fi
 mutate guest/azmod/extras.c "$d/ctl-selfm.c" 's/if \(!self_m && M.known\)\n/if (M.known)\n/'
 mutate guest/azmod/extras.c "$d/ctl-guessmk.c" 's/if \(!self_m && M.known\)\n/if (!self_m)\n/'
-mutate guest/azmod/extras.c "$d/ctl-topfit.c" 's/\(fits \? 2 : 0\)/2/'
+mutate guest/azmod/extras.c "$d/ctl-topfit.c" 's/if \(!fits && \(meter == 2 \|\| compact\)\)/if (0)/'
+mutate guest/azmod/extras.c "$d/ctl-cihome.c" 's/        \(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-rcap.c" 's/    if \(render > dwh - CI_RENDER_LESS\)\n        render = dwh - CI_RENDER_LESS;\n//'
+mutate guest/azmod/extras.c "$d/ctl-notours.c" 's/if \(g_pl_box\[i\].mine && \*\(volatile int \*\) \(o \+ OD_RENDER_H\) == g_pl_box\[i\].mine\)/if (g_pl_box[i].mine)/'
 mutate guest/azmod/extras.c "$d/ctl-topart.c" 's/            if \(art\)\n                pl_yscale\(x, 1.0f\);\n//'
 mutate guest/azmod/extras.c "$d/ctl-toprow.c" 's/        if \(pm_local_phase\(d, &oph\)\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
 mutate guest/azmod/extras.c "$d/ctl-noown.c" 's/        if \(ok\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
 mutate guest/azmod/extras.c "$d/ctl-nocvt.c" 's/cvt == PM_COUNTDOWN_CTRL_VT &&\s*//'
 mutate guest/azmod/extras.c "$d/ctl-near.c" 's/^#define PM_CUE_NEAR 15 /#define PM_CUE_NEAR 8 /m'
-mutate guest/azmod/extras.c "$d/ctl-nocdw.c" 's/        pl_move\(pl_kid\(fw, PM4_CDW_VT, 0\), lay != 0, -4000, 0, 0\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-nocdw.c" 's/            pl_move\(pl_kid\(fw, PM4_CDW_VT, 0\), meter != 0, -4000, 0, 0\);\n//'
 # ---------------------------------------------------------------- drum roll tile 8 (validated chain)
 d="$OUT/drumtile8"; mkdir -p "$d"
 extract guest/azmod/drum_roll_display.c '^static void drum8_index_apply\(void\) \{' > "$d/real.inc"
@@ -4405,6 +4418,9 @@ control "pm4 wiring: the countdown block not checked"                pm4_wiring 
 control "pm4 wiring: red only from two bars"                         pm4_wiring "$OUT/pm4/ctl-near.c"
 control "pm4 wiring: EP147's countdown never moved back"             pm4_wiring "$OUT/pm4/ctl-nocdw.c"
 control "pm4 wiring: Top on a table it does not fit"                 pm4_wiring "$OUT/pm4/ctl-topfit.c"
+control "pm4 wiring: the deck strip never sent home"                 pm4_wiring "$OUT/pm4/ctl-cihome.c"
+control "pm4 wiring: a lane's render height uncapped"                pm4_wiring "$OUT/pm4/ctl-rcap.c"
+control "pm4 wiring: EP147's own render height overwritten"          pm4_wiring "$OUT/pm4/ctl-notours.c"
 control "pm4 wiring: a number box frame left scaled"                 pm4_wiring "$OUT/pm4/ctl-topart.c"
 control "pm4 wiring: a Top ruler from an unknown phase"              pm4_wiring "$OUT/pm4/ctl-toprow.c"
 control "duplicate #define: a repeated definition is reported"    dupdefine_ctl

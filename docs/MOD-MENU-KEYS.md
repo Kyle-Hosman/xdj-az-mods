@@ -56,6 +56,7 @@ the table and `features.def` disagree.
 | `deck-key-title` | Key in Track Title | toggle | extras | 0 = off, 1 = on |
 | `phase-meter` | Phase Meter | toggle | extras | 0 = off, 1 = on |
 | `phase-meter-4deck` | 4 DECK Placement | choice | phase-meter | 0 = "Each Lane", 1 = "Top" |
+| `compact-track-info` | Compact Track Info | toggle | extras | 0 = off, 1 = on |
 | `extended-lead-in` | Extended Lead-In | toggle | extras | 0 = off, 1 = on |
 | `camelot-keys` | Camelot Keys | toggle | extras | 0 = off, 1 = on |
 | `remember-waveform-zoom` | Remember Waveform Zoom | toggle | extras | 0 = off, 1 = on |

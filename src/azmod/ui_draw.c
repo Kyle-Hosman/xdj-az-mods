@@ -567,6 +567,21 @@ static void draw_item_icon_raw(const azmod_fb *fb, int x, int y, int sz, int ite
         aa_icon(fb, x, y, sz, sh, 8, c);
         break;
     }
+    case AZF_COMPACT_INFO: { /* three tall lanes over a row of four cells (Compact Track Info) */
+        float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
+        float l = X + S * .10f, r = X + S * .90f, cy = Y + S * .84f, cw = S * .17f, g = S * .04f;
+        struct aa_shape sh[7] = {
+            {0, l, Y + S * .18f, r, Y + S * .18f, w},
+            {0, l, Y + S * .40f, r, Y + S * .40f, w},
+            {0, l, Y + S * .62f, r, Y + S * .62f, w},
+            {0, l, cy, l + cw, cy, w * 1.6f},
+            {0, l + cw + g, cy, l + 2 * cw + g, cy, w * 1.6f},
+            {0, l + 2 * (cw + g), cy, l + 3 * cw + 2 * g, cy, w * 1.6f},
+            {0, l + 3 * (cw + g), cy, r, cy, w * 1.6f},
+        };
+        aa_icon(fb, x, y, sz, sh, 7, c);
+        break;
+    }
     case AZF_THEMES: { /* a sun (Day Mode): a ring and eight rays */
         float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f, cx = X + S * .50f,
               cy = Y + S * .50f;

@@ -196,6 +196,10 @@ AZ_FEATURE( PHASE_METER,       "phase-meter",                "Phase Meter",     
 AZ_FEATURE( PHASE_METER_4DECK, "phase-meter-4deck", "4 DECK Placement",           PHASE_METER,  AZ_ROW_CHOICE,  0,                              -1,
             .d.choices = AZ_CHOICES("Each Lane", "Top"),
             .d.help = "Each Lane: a meter above each waveform. Top: all four together at the top.")
+/* 4 DECK: BROWSE's one-row deck strip in place of the two-row track info, and the lanes, their
+ * waveforms and left panels taller in the space it frees (extras.c pl_tick4, ci_place) */
+AZ_FEATURE( COMPACT_INFO,      "compact-track-info",         "Compact Track Info",         EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "4 DECK: the decks' info in one row at the bottom, and taller waveforms.")
 /* the jog spins a track back far past its start, not only 2 s (spin_back.c) */
 AZ_FEATURE( EXTENDED_LEAD_IN, "extended-lead-in",      "Extended Lead-In",        EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "Spin a track back as far as you like before its start.")
