@@ -151,6 +151,9 @@ static const char *mode_name(int m) {
 #ifdef AZMOD_HAVE_BROWSE_VIEW_SCREEN /* Browse View Mods' screen: likewise */
     case AZ_BROWSE_VIEW: return "browseview";
 #endif
+#ifdef AZMOD_HAVE_PHASE_METER_SCREEN /* the Phase Meter's screen: likewise */
+    case AZ_PHASE_METER: return "phasemeter";
+#endif
     default: return "?";
     }
 }
@@ -317,6 +320,18 @@ static void press_all(const char *cfg, azmod_state *s) {
                 }
                 azmod_back(s);
                 frame("browse.back", s);
+            }
+#endif
+#ifdef AZMOD_HAVE_PHASE_METER_SCREEN
+            if (s->mode == AZ_PHASE_METER) { /* its screen: the switch, the placement, BACK */
+                frame("phasemeter.in", s);
+                for (int i = 0; i < 2; i++) {
+                    knob(s, 1, false);
+                    snprintf(nm, sizeof nm, "phasemeter.knob%d", i);
+                    frame(nm, s);
+                }
+                azmod_back(s);
+                frame("phasemeter.back", s);
             }
 #endif
         }

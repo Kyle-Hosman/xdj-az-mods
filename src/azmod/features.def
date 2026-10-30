@@ -189,7 +189,13 @@ AZ_FEATURE( DECK_KEY_TITLE,    "deck-key-title",             "Key in Track Title
 /* (from the CDJ-3000X) two bar rulers between the decks' waveforms in 2 DECK and 2/4 DECK, and
  * the CDJ-3000's phase meter above each lane in 4 DECK, from EP147's own usecase::phase_meter */
 AZ_FEATURE( PHASE_METER,       "phase-meter",                "Phase Meter",                EXTRAS,       AZ_ROW_TOGGLE,  0,                              36,
+            .screen = AZ_PHASE_METER,
             .d.help = "Shows how the decks line up, above their waveforms.")
+/* where the 4 DECK meters go: Each Lane = a strip above each lane's waveform, Top = the four
+ * rulers together above all lanes (extras.c pl_tick4) */
+AZ_FEATURE( PHASE_METER_4DECK, "phase-meter-4deck", "4 DECK Placement",           PHASE_METER,  AZ_ROW_CHOICE,  0,                              -1,
+            .d.choices = AZ_CHOICES("Each Lane", "Top"),
+            .d.help = "Each Lane: a meter above each waveform. Top: all four together at the top.")
 /* the jog spins a track back far past its start, not only 2 s (spin_back.c) */
 AZ_FEATURE( EXTENDED_LEAD_IN, "extended-lead-in",      "Extended Lead-In",        EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "Spin a track back as far as you like before its start.")

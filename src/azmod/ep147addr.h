@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Generated per firmware build. Do not edit by hand. 459 EP147 addresses for azmod.
+/* Generated per firmware build. Do not edit by hand. 463 EP147 addresses for azmod.
  *
  * Code names an EP147 address by its v1.30 value (EP_1b93a28). ep147_addr_init(build)
  * fills ep147_addr[] for the running build, which common/ep147build.h
@@ -258,6 +258,7 @@ enum {
     EPI_2482f30,
     EPI_2485140,
     EPI_2485d40,
+    EPI_2487a80,
     EPI_2488570,
     EPI_248a250,
     EPI_248a8f0,
@@ -363,8 +364,11 @@ enum {
     EPI_2cedcf8,
     EPI_2cee580,
     EPI_2cfe0f0,
+    EPI_2cfe3a8,
     EPI_2cfe5c0,
     EPI_2d0b700,
+    EPI_2d0dc08,
+    EPI_2d0ddc0,
     EPI_2d1b678,
     EPI_2d1dbe8,
     EPI_2d21548,
@@ -685,6 +689,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2482f30,
     0x2485140,
     0x2485d40,
+    0x2487a80,
     0x2488570,
     0x248a250,
     0x248a8f0,
@@ -790,8 +795,11 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2cedcf8,
     0x2cee580,
     0x2cfe0f0,
+    0x2cfe3a8,
     0x2cfe5c0,
     0x2d0b700,
+    0x2d0dc08,
+    0x2d0ddc0,
     0x2d1b678,
     0x2d1dbe8,
     0x2d21548,
@@ -1111,6 +1119,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x25f03d0,   /* hand: juce::Component::getComponentAt(const Point<int> &): the only self-recursive functio */
     0x25f25e0,   /* hand: juce::Component::addChildComponent body (parent, child, zOrder): addAndMakeVisible t */
     0x25f31e0,   /* code w=12 | xref 6/6 agree */
+    0x25f4f20,   /* hand: juce::Component::setTransform(const AffineTransform&): the one function that tests t */
     0x25f5a10,   /* code w=24 | xref 6/6 agree */
     0x25f76f0,   /* code w=12 | xref 3/3 agree */
     0x25f7d90,   /* hand: juce::TableHeaderComponent::setColumnVisible(id, bool): identical bodies (search [th */
@@ -1216,8 +1225,11 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x309f030,   /* hand: RTTI: the primary vtable (offset-to-top 0) of N3gui8waveform9KeyWidgetE; its ctor 1. */
     0x309f8c0,   /* vtable N3gui8waveform24DeckInfo2DeckFieldWidgetE +0x0 | xref 2/2 agree */
     0x30af430,   /* hand: RTTI: the primary vtable of N3gui8waveform19DeckInfo2DeckWidgetE (ctor 1.30 0x1d7bd8 */
+    0x30af6e8,   /* hand: vtable of gui::waveform::DeckInfo4DeckFieldWidget (RTTI, offset-to-top 0, the only v */
     0x30af900,   /* hand: RTTI: the primary vtable of N3gui8waveform19DeckInfo4DeckWidgetE (ctor 1.30 0x1d82b0 */
     0x30bca40,   /* vtable N3gui8waveform19DeckInfoFieldWidgetE +0x0 | xref 1/2 agree */
+    0x30bef48,   /* hand: vtable of gui::waveform::DeckSetup4DeckFieldWidget (RTTI, offset-to-top 0, only one  */
+    0x30bf100,   /* hand: vtable of gui::waveform::DeckSetup4DeckWidget (RTTI, offset-to-top 0, only one on bo */
     0x30cc9b8,   /* vtable N3gui8waveform17DeckNo2DeckWidgetE +0x0 | xref 4/6 agree */
     0x30cef28,   /* vtable N3gui8waveform17DeckNo4DeckWidgetE +0x0 | xref 4/6 agree */
     0x30d2888,   /* vtable N3gui8waveform11OnAirWidgetE +0x0 | xref 3/3 agree */
@@ -1547,6 +1559,7 @@ static int ep147_addr_init(int build){
 #define EP_2482f30 ((uintptr_t)ep147_addr[EPI_2482f30])
 #define EP_2485140 ((uintptr_t)ep147_addr[EPI_2485140])
 #define EP_2485d40 ((uintptr_t)ep147_addr[EPI_2485d40])
+#define EP_2487a80 ((uintptr_t)ep147_addr[EPI_2487a80])
 #define EP_2488570 ((uintptr_t)ep147_addr[EPI_2488570])
 #define EP_248a250 ((uintptr_t)ep147_addr[EPI_248a250])
 #define EP_248a8f0 ((uintptr_t)ep147_addr[EPI_248a8f0])
@@ -1652,8 +1665,11 @@ static int ep147_addr_init(int build){
 #define EP_2cedcf8 ((uintptr_t)ep147_addr[EPI_2cedcf8])
 #define EP_2cee580 ((uintptr_t)ep147_addr[EPI_2cee580])
 #define EP_2cfe0f0 ((uintptr_t)ep147_addr[EPI_2cfe0f0])
+#define EP_2cfe3a8 ((uintptr_t)ep147_addr[EPI_2cfe3a8])
 #define EP_2cfe5c0 ((uintptr_t)ep147_addr[EPI_2cfe5c0])
 #define EP_2d0b700 ((uintptr_t)ep147_addr[EPI_2d0b700])
+#define EP_2d0dc08 ((uintptr_t)ep147_addr[EPI_2d0dc08])
+#define EP_2d0ddc0 ((uintptr_t)ep147_addr[EPI_2d0ddc0])
 #define EP_2d1b678 ((uintptr_t)ep147_addr[EPI_2d1b678])
 #define EP_2d1dbe8 ((uintptr_t)ep147_addr[EPI_2d1dbe8])
 #define EP_2d21548 ((uintptr_t)ep147_addr[EPI_2d21548])
