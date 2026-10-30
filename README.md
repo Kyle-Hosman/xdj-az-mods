@@ -213,7 +213,7 @@ Smaller tweaks, each with its own switch in the Mod Menu (most of them under
 
 | Mod | What it does |
 |:--|:--|
-| **Phase Meter** | Shows how the two decks line up, beat by beat, above their waveforms |
+| **Phase Meter** | Shows how the decks line up, beat by beat, above their waveforms. In 4 DECK each deck gets a meter like the CDJ-3000's: the master's beats over the deck's own, with both memory cue countdowns |
 | **Hide Track Title** | Tap a deck's track title to hide it or show it again |
 | **BEAT JUMP 2 First** | BEAT JUMP opens the 8, 16, 32 and 64 beat jumps first |
 | **Fine Vinyl Speed Adjust** | The SHORTCUT vinyl speed steps become a 1% slider |

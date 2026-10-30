@@ -993,7 +993,8 @@ static uintptr_t pm_wavebox(int d, int r[4]) {
  * received) and its vtable. g_pm_view is a wref slot: the component's destructor clears it. */
 static _Atomic uintptr_t g_pm_view;
 static uintptr_t g_pm_view_vt;
-static int g_pm_band[4]; /* band in view coordinates, h = 0: none */
+static int g_pm_band[4][4]; /* bands in view coordinates (x, y, w, h) */
+static int g_pm_nband;      /* how many: 0 = none */
 static void pm_fill(void *g, int x, int y, int w, int h, unsigned rgb) {
     unsigned char col[8] = {rgb & 0xff, rgb >> 8 & 0xff, rgb >> 16 & 0xff, 0xff, 0, 0, 0,
                             0}; /* B,G,R,A */
@@ -1044,13 +1045,13 @@ static int pm_wpos(int d, long *out) {
     }
     return 0;
 }
-static void pm_ruler(void *g, int d, int x0, int w, int y, int px, int col, int rh, int dh,
-                     int in) { /* rh: red downbeat height, centered on the line; dh: beat tick length
-                                  from the line toward the middle (in = +1 down, -1 up) */
+/* Deck d's bar phase, beats [0, 4), from EP147's own phase meter (LocalPlayer) evaluated at the
+ * deck's waveform position: 1 = known (a tempo in range). */
+static int pm_local_phase(int d, double *out) {
     unsigned long v = __atomic_load_n(&g_pm_bar[d], __ATOMIC_ACQUIRE);
     unsigned bpm100 = (unsigned) (v >> 32), pos = (unsigned) v;
     if (bpm100 < 2000 || bpm100 > 40000)
-        return; /* 20-400 BPM, else empty / unknown */
+        return 0; /* 20-400 BPM, else empty / unknown */
     double beat_ms = 6000000.0 / bpm100, bar_ms = 4 * beat_ms;
     double p = pos;
     long wp;
@@ -1098,20 +1099,35 @@ static void pm_ruler(void *g, int d, int x0, int w, int y, int px, int col, int 
     p = fmod(p, bar_ms);
     if (p < 0)
         p += bar_ms;
-    double phase = p / beat_ms; /* 0..4 beats into the bar */
-    double ppb = w / 10.0; /* ten beats across (CDJ-style ruler) */
+    *out = p / beat_ms;
+    return 1;
+}
+/* One ruler at bar phase `phase` (beats [0, 4)): the line, then ten beats across (CDJ-style),
+ * a red downbeat centered on the line (height rh), white beat ticks dh long from the line
+ * toward the middle (in = +1 down, -1 up). The playhead (px) is at the phase. Ticks are tw px
+ * wide (3 in the 2-deck band, 2 in the 4 DECK strips), a downbeat one wider. */
+static void pm_ruler_at(void *g, double phase, int x0, int w, int y, int px, int col, int rh,
+                        int dh, int in, int tw) {
+    double ppb = w / 10.0;
     pm_fill(g, x0, y, w, 2, col);
     for (int k = -12; k <= 12; k++) {
         int x = px + (int) lround((k - phase) * ppb);
         if (x < x0 + 2 || x > x0 + w - 4)
             continue;
         if (((k % 4) + 4) % 4 == 0)
-            pm_fill(g, x - 2, y + 1 - rh / 2, 4, rh, 0xE62828); /* line = rows y, y+1 */
+            pm_fill(g, x - tw / 2 - 1, y + 1 - rh / 2, tw + 1, rh, 0xE62828); /* line = y, y+1 */
         else if (in > 0)
-            pm_fill(g, x - 1, y, 3, dh, 0xFFFFFF); /* from the line, toward the middle */
+            pm_fill(g, x - tw / 2, y, tw, dh, 0xFFFFFF); /* from the line, toward the middle */
         else
-            pm_fill(g, x - 1, y + 2 - dh, 3, dh, 0xFFFFFF);
+            pm_fill(g, x - tw / 2, y + 2 - dh, tw, dh, 0xFFFFFF);
     }
+}
+/* Deck d's ruler (2 DECK and 2/4 DECK): nothing while its phase is unknown. */
+static void pm_ruler(void *g, int d, int x0, int w, int y, int px, int col, int rh, int dh,
+                     int in) {
+    double phase;
+    if (pm_local_phase(d, &phase))
+        pm_ruler_at(g, phase, x0, w, y, px, col, rh, dh, in, 3);
 }
 /* ---- Phase Layout ----------------------------------------------------------------------
  * Both deck waveforms shorter, with the space above them freed for the Phase Meter.
@@ -1164,10 +1180,11 @@ static uintptr_t pl_kidv(uintptr_t c, uintptr_t vt, int nth,
 static uintptr_t pl_kid(uintptr_t c, uintptr_t vt, int nth) {
     return pl_kidv(c, vt, nth, 0);
 }
+#define PL_NMOVED 12
 static struct {
     uintptr_t c, vt;
     int b[4];
-} g_pl_moved[8]; /* stock bounds of what we moved */
+} g_pl_moved[PL_NMOVED]; /* stock bounds of what we moved */
 static void pl_bounds(uintptr_t c, int x, int y, int w, int h) {
     if (*(volatile int *) (c + 0x20) == x && *(volatile int *) (c + 0x24) == y &&
         *(volatile int *) (c + 0x28) == w && *(volatile int *) (c + 0x2c) == h)
@@ -1179,14 +1196,14 @@ static void pl_move(uintptr_t c, int on, int dx, int dy, int dh) {
     if (!c)
         return;
     int i, f = -1;
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < PL_NMOVED; i++) {
         if (g_pl_moved[i].c == c && g_pl_moved[i].vt == *(volatile uintptr_t *) c)
             break;
         if (f < 0 && (!g_pl_moved[i].c || !ht_ptr_ok(g_pl_moved[i].c) ||
                       *(volatile uintptr_t *) g_pl_moved[i].c != g_pl_moved[i].vt))
             f = i;
     }
-    if (i == 8) { /* first time: what it has now is stock */
+    if (i == PL_NMOVED) { /* first time: what it has now is stock */
         if (!on || f < 0)
             return;
         i = f;
@@ -1251,6 +1268,63 @@ static void pl_rows(uintptr_t p, int on) {
         ((void (*)(uintptr_t, int)) JUCE_SETVISIBLE)(c, 0);
     }
 }
+/* 4 DECK: every lane gets its own meter strip, PM4_STRIP px above its waveform. The 4-deck
+ * entries of the same table (+0x194 field height, +0x1a0..+0x1ac the four rows' y) hold the
+ * lanes. A stock lane is 114 px with its waveform (92 px, whatever the field's height) at the
+ * top and 22 px empty below it, and 8 px separate the lanes: each row moves down by those
+ * 22 px and the field shrinks by them, so the waveform stays whole, and the strip takes the
+ * 22 px plus the 8 px gap above. The left DECK panels stay where they are. EP147's own countdown in
+ * the field (gui::detailed_waveform::CueCountdownWidget, shown for the selected deck of each
+ * side) moves out of sight while the strips show each deck's own; its stock bounds come back
+ * with the stock table. */
+#define PM4_STRIP 30 /* the meter strip above each lane's waveform */
+#define PM4_SHIFT 22 /* how far each lane moves down (and its field shrinks) */
+#define PM4_CDW_VT EP_2b62268 /* gui::detailed_waveform::CueCountdownWidget (its Component) */
+static int g_pl_active4;   /* the 4-deck strip table is live in the view */
+static int g_pl_stock4[5]; /* the stock 4-deck height and rows, captured before the first write */
+static void pl_tick4(uintptr_t v, int mode) {
+    int want = pm_on() && mode == 2;
+    volatile int *t = (volatile int *) (v + 0x190);
+    int cur[5] = {t[1], t[4], t[5], t[6], t[7]};
+    int ours = g_pl_stock4[0] && cur[0] == g_pl_stock4[0] - PM4_SHIFT;
+    for (int i = 1; i < 5 && ours; i++)
+        ours = cur[i] == g_pl_stock4[i] + PM4_SHIFT;
+    if (!ours)
+        for (int i = 0; i < 5; i++)
+            g_pl_stock4[i] = cur[i];
+    if (g_pl_stock4[0] <= PM4_SHIFT + 80)
+        return; /* never seen a stock table this could come from: touch nothing */
+    int wv[5];
+    wv[0] = g_pl_stock4[0] - (want ? PM4_SHIFT : 0);
+    for (int i = 1; i < 5; i++)
+        wv[i] = g_pl_stock4[i] + (want ? PM4_SHIFT : 0);
+    if (memcmp(cur, wv, sizeof cur)) {
+        t[1] = wv[0];
+        t[4] = wv[1];
+        t[5] = wv[2];
+        t[6] = wv[3];
+        t[7] = wv[4];
+    }
+    /* EP147 reads the 4-deck entries only when it enters 4 DECK (its relayout lays out the
+     * 2-deck rows), so in 4 DECK each lane's field is set to its row here: the field whose top
+     * is a stock row or that row moved by the strip is that row's lane. */
+    for (int i = 0; i < 4; i++) {
+        uintptr_t fw = pl_kid(v, PM_WAVEOUT_VT, i);
+        if (!fw)
+            continue;
+        if (mode == 2 && (*(volatile uint32_t *) (fw + 0xc0) & 2)) {
+            int y = *(volatile int *) (fw + 0x24);
+            for (int j = 0; j < 4; j++)
+                if (y == g_pl_stock4[1 + j] || y == g_pl_stock4[1 + j] + PM4_SHIFT) {
+                    pl_bounds(fw, *(volatile int *) (fw + 0x20), wv[1 + j],
+                              *(volatile int *) (fw + 0x28), wv[0]);
+                    break;
+                }
+        }
+        pl_move(pl_kid(fw, PM4_CDW_VT, 0), want, -4000, 0, 0);
+    }
+    g_pl_active4 = want;
+}
 static void pl_tick(void) {
     uintptr_t v = g_pl_view;
     if (!pl_view_ok(v)) {
@@ -1260,7 +1334,8 @@ static void pl_tick(void) {
     int mode = *(volatile int *) (v + PL_MODE);
     if (mode >= 0 && mode <= 2)
         __atomic_store_n(&g_wv_mode, mode, __ATOMIC_RELAXED);
-    int want = pm_on() && (mode == 0 || mode == 1); /* 2 DECK and 2/4 DECK; 4 DECK has no pair */
+    pl_tick4(v, mode);
+    int want = pm_on() && (mode == 0 || mode == 1); /* 2 DECK and 2/4 DECK */
     volatile int *t = (volatile int *) (v + 0x190);
     int cur_h = t[0], cur_a = t[2], cur_b = t[3];
     if (!(cur_h == PL_H && cur_a == PL_Y0 && cur_b == PL_Y1)) {
@@ -1312,10 +1387,153 @@ static void pl_tick(void) {
         pl_move(gt, 0, 0, 0, 0);
     g_pl_active = want;
 }
+/* ---- Phase Meter in 4 DECK -------------------------------------------------------------
+ * Each lane gets the CDJ-3000's phase meter in the strip above its waveform (pl_tick4): the
+ * master's ruler on top in orange, the lane's own deck below in blue, ten beats across with
+ * white beat ticks pointing inward and red downbeats, and a white line at EP147's playhead. On
+ * the left, as on the CDJ: the master's number in an orange box (when another deck is master),
+ * the master's memory cue countdown in orange and the lane's own below it in blue, each red
+ * under four bars to its cue. "--.-" when there is none or it is not known. The master's lane shows
+ * an empty master ruler. A lane that shows a PRO DJ LINK player (Link Waveforms) has that
+ * player's phase and countdown; an external master not shown in a lane, its beat packets.
+ *
+ * Countdowns of the AZ's own decks: EP147's own gui::CueCountdown of each deck model (+0x160,
+ * beats to the next memory cue, 0x80000000 none), read after EP147's per-deck model update
+ * (inline hook on that update: model +0 is its deck index, CueState at +0x1040, its
+ * CueCountdown at +0x20, both checked by their shared_ptr blocks).
+ * Text: EP147's own UI font (its font factory, "PDJ-TsukuGoCustom Pro" at a height) with
+ * juce::Graphics drawFittedText, the Strings and Fonts built once on the message thread. */
+#define PM_MODEL_UPDATE EP_1fc9a80     /* gui deck model: the per-deck update (model, PlayerState) */
+#define PM_CUESTATE_CTRL_VT EP_2dedd88 /* the shared_ptr block of gui::CueState (object +0x10) */
+#define PM_COUNTDOWN_CTRL_VT EP_2dd5300 /* the shared_ptr block of gui::CueCountdown (+0x10) */
+#define PM_FONT_GET EP_1f4a5b0 /* EP147's UI font at a height: (float), juce::Font through x8 */
+#define PM_CUE_NONE 0x80000000u
+#define PM_CUE_NEAR 15 /* beats: a countdown is red under four bars (the CDJ-3000's 03.3) */
+static _Atomic uint32_t g_pm_cue[4] = {PM_CUE_NONE, PM_CUE_NONE, PM_CUE_NONE, PM_CUE_NONE};
+static long (*g_pm_omodel)(void *, void *);
+static long pm_model_hook(void *model, void *ps) {
+    long r = g_pm_omodel(model, ps);
+    uintptr_t m = (uintptr_t) model, idx = 0, cs = 0, csc = 0, cd = 0, cdc = 0, cvt = 0, v = 0;
+    if (!pm_on() || !own_q(m, &idx) || (uint32_t) idx > 3)
+        return r;
+    uint32_t val = PM_CUE_NONE;
+    if (own_q(m + 0x1040, &cs) && own_q(m + 0x1048, &csc) && own_q(csc, &cvt) &&
+        cvt == PM_CUESTATE_CTRL_VT && cs == csc + 0x10 && own_q(cs + 0x20, &cd) &&
+        own_q(cs + 0x28, &cdc) && own_q(cdc, &cvt) && cvt == PM_COUNTDOWN_CTRL_VT &&
+        cd == cdc + 0x10 && own_q(cd + 0x160, &v))
+        val = (uint32_t) v;
+    __atomic_store_n(&g_pm_cue[(uint32_t) idx], val, __ATOMIC_RELAXED);
+    return r;
+}
+/* "BB.b" as the deck shows a countdown of n beats: 0 = "00.0", else bars (n - 1) / 4 and beat
+ * (n - 1) % 4 + 1; anything past what a deck counts (PM_CD_MAX) is none, "--.-". */
+#define PM_CD_MAX 256
+static void pm_cd_fmt(uint32_t n, char t[8]) {
+    if (n > PM_CD_MAX)
+        strcpy(t, "--.-");
+    else if (n == 0)
+        strcpy(t, "00.0");
+    else
+        snprintf(t, 8, "%02u.%u", (n - 1) / 4, (n - 1) % 4 + 1);
+}
+static uintptr_t g_pm_cdstr[PM_CD_MAX + 2]; /* [n] = "BB.b", [PM_CD_MAX + 1] = "--.-" */
+static uintptr_t g_pm_bars, g_pm_digit[10];
+static uintptr_t g_pm_font[3][4]; /* juce::Font: master countdown, own countdown, "Bars" */
+static float const g_pm_font_h[3] = {15.0f, 21.0f, 12.0f};
+static int g_pm4_ok; /* message thread: the Strings and Fonts are built */
+static void pm4_init(void) {
+#ifdef SK_HAVE_HOOK
+    if (g_pm4_ok)
+        return;
+    char t[8];
+    for (uint32_t n = 0; n <= PM_CD_MAX + 1; n++) {
+        pm_cd_fmt(n, t);
+        ((void (*)(uintptr_t *, const char *)) JSTR_FROM_CSTR)(&g_pm_cdstr[n], t);
+    }
+    ((void (*)(uintptr_t *, const char *)) JSTR_FROM_CSTR)(&g_pm_bars, "Bars");
+    for (int i = 0; i < 10; i++) {
+        t[0] = (char) ('0' + i);
+        t[1] = 0;
+        ((void (*)(uintptr_t *, const char *)) JSTR_FROM_CSTR)(&g_pm_digit[i], t);
+    }
+    for (int i = 0; i < 3; i++)
+        kt_call_x8((void *) PM_FONT_GET, g_pm_font[i], 0, 0, g_pm_font_h[i]);
+    g_pm4_ok = 1;
+#endif
+}
+static uintptr_t *pm_cd_text(uint32_t n) {
+    return &g_pm_cdstr[n <= PM_CD_MAX ? n : PM_CD_MAX + 1];
+}
+static void pm_text(void *g, int font, const uintptr_t *str, int x, int y, int w, int h, int just,
+                    unsigned rgb) {
+    unsigned char col[8] = {rgb & 0xff, rgb >> 8 & 0xff, rgb >> 16 & 0xff, 0xff, 0, 0, 0, 0};
+    int rect[4] = {x, y, w, h};
+    ((void (*)(void *, void *)) SETCOLOUR_ADDR)(g, col);
+    ((void (*)(void *, uintptr_t)) KT_SETFONT)(g, (uintptr_t) g_pm_font[font]);
+    ((void (*)(void *, const uintptr_t *, const int *, const int *, int, float)) KT_DRAWFITTED)(
+        g, str, rect, &just, 1, 1.0f);
+}
+#define PM_ORANGE 0xFF8C00
+#define PM_BLUE 0x28A0FF
+#define PM_RED 0xE62828
+#define PM4_X_TEXT 216 /* view x: the countdowns */
+#define PM4_X0 306     /* view x: the rulers, to the lane's right end */
+#define PM4_X1 1066
+/* The 4 DECK strips; rv = the view's screen rect, rr[d] each deck's waveform box. */
+static void pm4_paint(void *g, const int rv[4], int rr[4][4]) {
+    int m = __atomic_load_n(&g_master_deck, __ATOMIC_RELAXED); /* the master deck, -1 = none */
+    double mph = 0;
+    int mk = m >= 0 && pm_local_phase(m, &mph), mnum = m + 1;
+    uint32_t mcd = m >= 0 ? __atomic_load_n(&g_pm_cue[m], __ATOMIC_RELAXED) : PM_CUE_NONE;
+    ((void (*)(void *)) JUCE_G_SAVESTATE)(g);
+    for (int d = 0; d < 4; d++) {
+        uintptr_t box = pm_wavebox(d, rr[d]);
+        uintptr_t ph = box ? pm_child(box, PM_PLAYHEAD_VT, 1) : 0;
+        if (!ph)
+            continue;
+        int y0 = rr[d][1] - PM4_STRIP - rv[1], x0 = PM4_X0 - rv[0], w = PM4_X1 - PM4_X0;
+        int px = rr[d][0] - rv[0] + *(volatile int *) (ph + 0x20) + *(volatile int *) (ph + 0x28) / 2;
+        if (y0 < 0 || px < x0 + 4 || px > x0 + w - 4 || g_pm_nband >= 4)
+            continue;
+        int self_m = d == m;
+        double oph;
+        int ok = pm_local_phase(d, &oph);
+        if (!self_m && mk)
+            pm_ruler_at(g, mph, x0, w, y0 + 7, px, PM_ORANGE, 14, 7, +1, 2);
+        else
+            pm_fill(g, x0, y0 + 7, w, 2, PM_ORANGE);
+        if (ok)
+            pm_ruler_at(g, oph, x0, w, y0 + 23, px, PM_BLUE, 14, 7, -1, 2);
+        else
+            pm_fill(g, x0, y0 + 23, w, 2, PM_BLUE);
+        pm_fill(g, px - 1, y0 + 1, 2, PM4_STRIP - 2, 0xFFFFFF);
+        if (g_pm4_ok) {
+            int tx = PM4_X_TEXT - rv[0];
+            uint32_t own = __atomic_load_n(&g_pm_cue[d], __ATOMIC_RELAXED);
+            if (!self_m && mnum >= 1 && mnum <= 9) {
+                pm_fill(g, tx, y0 + 1, 13, 13, PM_ORANGE);
+                pm_text(g, 2, &g_pm_digit[mnum], tx, y0 + 1, 13, 13, 0x24, 0x000000);
+            }
+            uint32_t mshow = self_m ? PM_CUE_NONE : mcd;
+            unsigned mc = mshow <= PM_CUE_NEAR ? PM_RED : PM_ORANGE;
+            pm_text(g, 0, pm_cd_text(mshow), tx + 15, y0, 35, 14, 0x22, mc);
+            pm_text(g, 2, &g_pm_bars, tx + 53, y0 + 2, 32, 12, 0x21, mc);
+            unsigned oc = own <= PM_CUE_NEAR ? PM_RED : PM_BLUE;
+            pm_text(g, 1, pm_cd_text(own), tx, y0 + 13, 50, 17, 0x22, oc);
+            pm_text(g, 2, &g_pm_bars, tx + 53, y0 + 16, 32, 13, 0x21, oc);
+        }
+        int *b = g_pm_band[g_pm_nband++];
+        b[0] = PM4_X_TEXT - rv[0];
+        b[1] = y0;
+        b[2] = PM4_X1 - PM4_X_TEXT;
+        b[3] = PM4_STRIP;
+    }
+    ((void (*)(void *)) JUCE_G_RESTORESTATE)(g);
+}
 static void pm_paint(long self, long g) {
     if (pl_view_ok((uintptr_t) self))
         g_pl_view = (uintptr_t) self;
-    g_pm_band[3] = 0;
+    g_pm_nband = 0;
     if (!pm_on() || !g || pm_trackinfo_open((uintptr_t) self))
         return; /* the band stays 0: pm_tick stops repainting it */
     /* Decks: the two waveforms on screen, each by the deck its WWB ctor received
@@ -1328,6 +1546,14 @@ static void pm_paint(long self, long g) {
                 dk[n] = d;
             n++;
         }
+    if (n >= 1 && g_pl_active4) { /* 4 DECK: a strip for each lane whose deck is known */
+        if (!ht_screen_rect((uintptr_t) self, rv))
+            return;
+        g_pm_view_vt = *(volatile uintptr_t *) self;
+        wref_set(&g_pm_view, (uintptr_t) self);
+        pm4_paint((void *) g, rv, rr);
+        return;
+    }
     if (n != 2)
         return;
     if (rr[dk[1]][1] < rr[dk[0]][1]) {
@@ -1361,10 +1587,11 @@ static void pm_paint(long self, long g) {
     int mid = y0 + h / 2;
     g_pm_view_vt = *(volatile uintptr_t *) self;
     wref_set(&g_pm_view, (uintptr_t) self);
-    g_pm_band[0] = x0;
-    g_pm_band[1] = y0;
-    g_pm_band[2] = w;
-    g_pm_band[3] = h;
+    g_pm_band[0][0] = x0;
+    g_pm_band[0][1] = y0;
+    g_pm_band[0][2] = w;
+    g_pm_band[0][3] = h;
+    g_pm_nband = 1;
     ((void (*)(void *)) JUCE_G_SAVESTATE)((void *) g);
     uintptr_t out = *(volatile uintptr_t *) (b0 + 0x18), lbl = 0;
     int lr[4];
@@ -1407,16 +1634,20 @@ static void pm_paint(long self, long g) {
 }
 /* rtick (message thread): mark the band dirty so it moves every frame */
 static void pm_tick(void) {
+    if (pm_on() && g_pl_active4)
+        pm4_init();
     uintptr_t view = wref_get(&g_pm_view); /* 0 once its destructor ran */
-    if (!pm_on() || g_pm_band[3] <= 0 || !ht_ptr_ok(view))
+    if (!pm_on() || g_pm_nband <= 0 || !ht_ptr_ok(view))
         return;
     uintptr_t vt = 0;
     if (!own_q(view, &vt) || vt != g_pm_view_vt) {
         wref_set(&g_pm_view, 0);
         return;
     } /* live (wref) but no longer the view painted: forget it */
-    int rect[4] = {g_pm_band[0], g_pm_band[1], g_pm_band[2], g_pm_band[3]};
-    ((void (*)(void *, const int *)) PM_REPAINT_AREA)((void *) view, rect);
+    for (int i = 0; i < g_pm_nband && i < 4; i++) {
+        int rect[4] = {g_pm_band[i][0], g_pm_band[i][1], g_pm_band[i][2], g_pm_band[i][3]};
+        ((void (*)(void *, const int *)) PM_REPAINT_AREA)((void *) view, rect);
+    }
 }
 /* WaveformView's own paintOverChildren (Component fns 0x29e9790, slot 27 = 0x21c81c0). The
  * view's children paint over anything drawn from WaveformView::paint; drawing here lands on
@@ -1436,12 +1667,14 @@ static void install_phasemeter(void) {
     if (img_q(PM_VIEW_VT + 27 * 8, &cur) && cur == PM_VIEW_POC)
         p = azm_patch_vtable(PM_VIEW_VT + 27 * 8, (void *) pm_poc_hook, (void **) &g_pm_opoc);
     int a = azm_install_hook(PM_LP_UPDATE, (void *) pm_lp_hook, (void **) &g_pm_olp);
+    int c = azm_install_hook(PM_MODEL_UPDATE, (void *) pm_model_hook, (void **) &g_pm_omodel);
     int x = ht_install_xnext(); /* tap hook; not used by the meter, harmless if already in */
     FILE *f = azlog_open("/tmp/azmod-phase.log", "a");
     if (f) {
         fprintf(f,
-                "install phasemeter: LocalPlayer.update %d view.paintOverChildren %d xnext %d\n",
-                a, p, x);
+                "install phasemeter: LocalPlayer.update %d view.paintOverChildren %d xnext %d "
+                "model.update %d\n",
+                a, p, x, c);
         fclose(f);
     }
 }
