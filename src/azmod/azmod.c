@@ -88,7 +88,6 @@ static int g_ep147_build;        /* EPB_* from ep147build.h, set in azmod_init *
 #include <sys/timex.h> /* adjtimex: is the system clock synchronized (the Clock readout) */
 #include "clock_tz.h"   /* the Clock readout's zone file and local time */
 #include "clock_set.h"  /* Set Time Manually: when a set time may be shown */
-#include <linux/rtc.h>  /* RTC_SET_TIME: Set Time Manually also sets the RTC */
 #include "mm_resume.h"  /* reopen the Mod Menu when SOURCE comes back */
 #include <unistd.h>
 #include <X11/Xlib.h>

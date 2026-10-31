@@ -266,6 +266,9 @@ extern __attribute__((visibility("hidden"))) uint32_t g_azmod_clockn_ink, g_azmo
 /* Set Time Manually: the UTC time the menu asks the overlay thread to set, 0 = none (screen_overlays.c
  * writes it, mod_menu_overlay.c ov_poll_clock takes it); __atomic only */
 extern __attribute__((visibility("hidden"))) int64_t g_azmod_clock_set_req;
+/* the seconds the Clock adds to the system time (the manual set's offset, 0 = none); ov_poll_clock
+ * writes it, the Set Time picker starts from it; __atomic only */
+extern __attribute__((visibility("hidden"))) int64_t g_azmod_clock_off;
 __attribute__((visibility("hidden"))) int azmod_clock_tz_index(const char *zone); /* -1 unknown */
 __attribute__((visibility("hidden"))) const char *azmod_clock_tz_zone(int k);     /* UTC if out of range */
 

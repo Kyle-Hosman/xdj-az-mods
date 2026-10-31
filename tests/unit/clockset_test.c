@@ -5,7 +5,10 @@
  *   - civil dates to days and back, against the C library's timegm for every day of the range;
  *   - local fields to UTC through a real zone file (Denver, both offsets, the skipped spring hour,
  *     every hour of a year round-tripped), and UTC itself without a file;
- *   - the time shown only when synchronized or not before the last manual set;
+ *   - the manual set kept as an offset over the system time: its record written and read back, an
+ *     older build's empty marker, and every malformed record refused;
+ *   - the time shown: synchronized, or the system time plus the set's offset while the set holds
+ *     (this boot, or a reboot after it), never after a power-off reset the clock below it;
  *   - the picker's start: the time itself, else a stick's newest file, else the range's start.
  *
  * Usage: clockset_test <fixtures/zoneinfo dir> */
@@ -115,14 +118,66 @@ int main(int argc, char **argv) {
     struct ctz none = {0};
     CHECK("a zone that cannot answer: refused", cs_to_utc(&none, &f, &t) == -1);
 
-    /* ---- shown or not, and the start ---- */
-    int64_t now = 1792400000LL, mk = now - 3600;
-    CHECK("synchronized: shown", cs_valid(1, 0, 1000));
-    CHECK("not synchronized, never set: not shown", !cs_valid(0, 0, now));
-    CHECK("set an hour ago: shown", cs_valid(0, mk, now));
-    CHECK("reset below the set (power off): not shown", !cs_valid(0, mk, 1358499000LL));
-    CHECK("a few seconds below the set: shown", cs_valid(0, now, now - CS_SLACK));
-    CHECK("a marker before the range: not shown", !cs_valid(0, 1358499000LL, 1358500000LL));
+    /* ---- the manual set's record ---- */
+    static const char B1[] = "0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90", B2[] = "77e1c0aa-1b2c-4d3e-9f40-5a6b7c8d9e0f";
+    char line[CS_REC_MAX];
+    struct cs_rec r, q;
+    int64_t sys = 946684800LL + 600; /* a deck whose RTC was reset: 2000-01-01, ten minutes up */
+    int64_t set = 1793451420LL;      /* the time the user picks */
+    int ln = cs_rec_format(line, sizeof line, B1, sys, set);
+    CHECK("a set: one line", ln > 0 && line[ln - 1] == '\n' && !strncmp(line, "azclock1 ", 9));
+    CHECK("its record reads back", cs_rec_parse(line, (size_t) ln, 0, &r) == 0 && r.has && r.anchor == sys &&
+                                       r.off == set - sys && !strcmp(r.boot, B1));
+    CHECK("without the newline too", cs_rec_parse(line, (size_t) ln - 1, 0, &q) == 0 && q.off == r.off);
+    CHECK("a negative offset (a clock ahead)", cs_rec_format(line, sizeof line, B1, set, set - 6 * 3600) > 0 &&
+                                                   cs_rec_parse(line, strlen(line), 0, &q) == 0 && q.off == -6 * 3600);
+    CHECK("an older build's empty marker: its time, offset 0", cs_rec_parse("", 0, set, &q) == 0 && q.has &&
+                                                                   q.anchor == set && q.off == 0 && !q.boot[0]);
+    CHECK("an empty marker before the range: no set", cs_rec_parse("", 0, 1358499000LL, &q) == -1 && !q.has);
+    CHECK("no boot id: not written", cs_rec_format(line, sizeof line, "", sys, set) == -1);
+    CHECK("an offset over 200 years: not written", cs_rec_format(line, sizeof line, B1, 0, CS_OFF_MAX + 1) == -1);
+    CHECK("too small a buffer: not written", cs_rec_format(line, 20, B1, sys, set) == -1);
+    static const char *const BAD[] = {
+        "azclock2 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 846766020\n",  /* another version */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8eXX 946685400 846766020\n",  /* not a boot id */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e9 946685400 846766020\n",   /* a short boot id */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 846766020 1\n", /* a field more */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400\n",           /* the offset missing */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 -5 846766020\n",        /* an anchor before 1970 */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 9999999999\n", /* an offset over 200 years */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 99999999999999999999\n", /* overflow */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 -\n",         /* a sign alone */
+        "azclock1 0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90 946685400 846766020\n\n", /* a second line */
+        "azclock1 ",
+    };
+    int bad_ok = 1;
+    for (unsigned k = 0; k < sizeof BAD / sizeof BAD[0]; k++)
+        bad_ok &= cs_rec_parse(BAD[k], strlen(BAD[k]), set, &q) == -1 && !q.has;
+    CHECK("every malformed record refused, nothing kept", bad_ok);
+
+    /* ---- the time shown ---- */
+    int64_t now = 1792400000LL, mk = now - 3600, t2 = 0;
+    struct cs_rec unset = {0};
+    cs_rec_parse(line, (size_t) cs_rec_format(line, sizeof line, B1, sys, set), 0, &r);
+    CHECK("synchronized: the system time", cs_shown(1, &unset, 0, now, now - 60, &t2) && t2 == now);
+    CHECK("synchronized: the set ignored", cs_shown(1, &r, 1, now, now - 60, &t2) && t2 == now);
+    CHECK("not synchronized, never set: none", !cs_shown(0, &unset, 0, now, now - 60, &t2));
+    CHECK("set in this boot: system time plus the offset", cs_shown(0, &r, 1, sys + 30, sys - 600, &t2) && t2 == set + 30);
+    CHECK("this boot, the clock unchanged by the set", cs_shown(0, &r, 1, sys, sys - 600, &t2) && t2 == set);
+    CHECK("a reboot after the set (the RTC kept time): held",
+          cs_shown(0, &r, 0, sys + 7200, sys + 7000, &t2) && t2 == set + 7200);
+    CHECK("a power-off reset the RTC (a new boot from before the set): none",
+          !cs_shown(0, &r, 0, sys + 3600, 946684800LL + 5, &t2));
+    CHECK("the same, though the deck has now run past the set's system time",
+          !cs_shown(0, &r, 0, sys + 86400, 946684800LL + 5, &t2));
+    CHECK("a time before the range: none", cs_rec_format(line, sizeof line, B2, now, CS_T_MIN) > 0 &&
+                                               cs_rec_parse(line, strlen(line), 0, &q) == 0 &&
+                                               !cs_shown(0, &q, 1, now - 10, now - 100, &t2));
+    struct cs_rec mrk;
+    cs_rec_parse("", 0, mk, &mrk);
+    CHECK("a marker an hour ago: the system time", cs_shown(0, &mrk, 0, now, now - 7200, &t2) && t2 == now);
+    CHECK("a marker, the clock reset below it: none", !cs_shown(0, &mrk, 0, 1358499000LL, 1358498000LL, &t2));
+    CHECK("a marker a few seconds ahead: shown", cs_shown(0, &mrk, 0, mk - CS_SLACK, mk - 999, &t2));
     CHECK("start: the time when it is shown", cs_seed(1, now, mk) == now);
     CHECK("start: the stick's newest file when not", cs_seed(0, 1358499000LL, mk) == mk);
     CHECK("start: the range's start without either", cs_seed(0, 1358499000LL, 1000) == CS_T_MIN);

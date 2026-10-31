@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* clock_set.h: the Clock's Set Time Manually picker, the pure part: the fields a user steps
  * (local date and time in the Clock's zone), their conversion to and from UTC through the zone
- * (clock_tz.h), whether the system time can be shown, and where the picker starts. No I/O, no
- * global state. */
+ * (clock_tz.h), the last set (an offset over the system time) and the time shown, and where the
+ * picker starts. No I/O, no global state. */
 #ifndef CLOCK_SET_H
 #define CLOCK_SET_H
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include "clock_tz.h"
 
 enum {
@@ -99,11 +101,101 @@ static inline int cs_to_utc(const struct ctz *z, const struct cs_fields *f, int6
     return 0;
 }
 
-/* Whether the system time can be shown: synchronized (NTP), or not before the last manual set
- * (marker: its time, 0 = none). A clock that fell back below it (a power-off reset the RTC) is
- * not set. */
-static inline int cs_valid(int sync, int64_t marker, int64_t now) {
-    return sync || (marker >= CS_T_MIN && now >= marker - CS_SLACK);
+/* The last manual set. The system time itself is never changed: a backward step of it stalls
+ * EP147, whose timed waits run on the wall clock, until the wall clock catches up (hours).
+ * The set is kept instead as an offset over the system time, in a small file: the boot it was
+ * made in, the system time then (the anchor) and the offset, as one line
+ * "azclock1 <boot id> <anchor> <offset>". An empty file is a marker from an older build, which
+ * did set the system time: its modification time is the time set, and its offset 0. */
+#define CS_BOOT_LEN 36             /* /proc/sys/kernel/random/boot_id, without the newline */
+#define CS_OFF_MAX 6311390400LL    /* 200 years in seconds: a larger offset is not a set */
+#define CS_ANCHOR_MAX 100000000000LL
+#define CS_REC_MAX 96              /* the longest line cs_rec_format writes, and then some */
+struct cs_rec {
+    int has;                    /* a set was read */
+    int64_t anchor;             /* the system time when it was set (a marker: the time set) */
+    int64_t off;                /* seconds to add to the system time */
+    char boot[CS_BOOT_LEN + 1]; /* the boot it was made in, "" for a marker */
+};
+static inline int cs_digits(const char *b, size_t n, size_t *i, int64_t lo, int64_t hi, int64_t *v) {
+    int neg = *i < n && b[*i] == '-';
+    size_t k = *i + (size_t) neg, d = 0;
+    int64_t x = 0;
+    for (; k < n && b[k] >= '0' && b[k] <= '9'; k++, d++) {
+        if (d >= 12)
+            return -1;
+        x = x * 10 + (b[k] - '0');
+    }
+    if (!d)
+        return -1;
+    x = neg ? -x : x;
+    if (x < lo || x > hi)
+        return -1;
+    *v = x;
+    *i = k;
+    return 0;
+}
+/* The record from a file's bytes b[0..n) and its modification time: 0, or -1 when it is not a
+ * record (r->has 0). */
+static inline int cs_rec_parse(const char *b, size_t n, int64_t mtime, struct cs_rec *r) {
+    static const char P[] = "azclock1 ";
+    memset(r, 0, sizeof *r);
+    if (!n) {
+        if (mtime < CS_T_MIN || mtime > CS_ANCHOR_MAX)
+            return -1;
+        r->has = 1, r->anchor = mtime;
+        return 0;
+    }
+    size_t i = sizeof P - 1;
+    if (n < i + CS_BOOT_LEN + 4 || memcmp(b, P, i))
+        return -1;
+    for (int k = 0; k < CS_BOOT_LEN; k++, i++) {
+        char c = b[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-'))
+            return -1;
+        r->boot[k] = c;
+    }
+    int64_t a, o;
+    if (b[i++] != ' ' || cs_digits(b, n, &i, 0, CS_ANCHOR_MAX, &a) || i >= n || b[i++] != ' ' ||
+        cs_digits(b, n, &i, -CS_OFF_MAX, CS_OFF_MAX, &o))
+        goto bad;
+    if (i < n && b[i] == '\n')
+        i++;
+    if (i != n)
+        goto bad;
+    r->has = 1, r->anchor = a, r->off = o;
+    return 0;
+bad:
+    memset(r, 0, sizeof *r);
+    return -1;
+}
+/* The line for a set made now (system time) in boot `boot` for time t: its length, or -1. */
+static inline int cs_rec_format(char *out, size_t n, const char *boot, int64_t now, int64_t t) {
+    int64_t o = t - now;
+    if (!boot || strlen(boot) != CS_BOOT_LEN || now < 0 || now > CS_ANCHOR_MAX || o < -CS_OFF_MAX || o > CS_OFF_MAX)
+        return -1;
+    int k = snprintf(out, n, "azclock1 %s %lld %lld\n", boot, (long long) now, (long long) o);
+    return k > 0 && (size_t) k < n ? k : -1;
+}
+/* The time the Clock shows (*t and 1), or 0 for none. Synchronized (NTP): the system time.
+ * Else the system time plus the set's offset while the set still holds: made in this boot, or
+ * in an earlier one when this boot started (boot_t, the system time at boot) after it, on a
+ * clock that kept running through the reboot. A power-off resets the RTC and starts this boot
+ * before the set: not shown. A marker holds while the system time is not before it. */
+static inline int cs_shown(int sync, const struct cs_rec *r, int same_boot, int64_t now, int64_t boot_t, int64_t *t) {
+    int64_t v = now;
+    if (!sync) {
+        if (!r || !r->has)
+            return 0;
+        int holds = r->boot[0] ? same_boot || boot_t >= r->anchor - CS_SLACK : now >= r->anchor - CS_SLACK;
+        if (!holds)
+            return 0;
+        v = now + r->off;
+        if (v < CS_T_MIN)
+            return 0;
+    }
+    *t = v;
+    return 1;
 }
 /* Where the picker starts: the time itself when it can be shown, else the newest file time on
  * a stick (the last export), else the start of CS_YEAR_MIN. */
