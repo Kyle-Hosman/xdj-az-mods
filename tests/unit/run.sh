@@ -1624,6 +1624,12 @@ pm4_wiring() { # $1 = extras.c
     grep -q 'int compact = on4 && have;' <<<"$p" && grep -q 'ci_place(v, compact);' <<<"$p" &&
         extract "$1" '^static void ci_place\(' | perl -0ne 'exit !/if \(ci_ok\(s, CI_STRIP_VT\) && cur != g_ci.par && ci_ok\(g_ci.par, CI_BROWSE_VT\)\) \{\n[^\n]*\n[^\n]*\n\s*\(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);/' ||
         { echo "FAIL  pm4 wiring: the deck strip not sent home to BROWSE"; return 1; }
+    # the strip found without a visit to BROWSE: under BrowseView as setvis_hook saw it, read only
+    # while that pointer is tracked (cleared by the component destructor hook) and vtable-checked
+    extract "$1" '^static int ci_strip\(' |
+        perl -0ne 'exit !/uintptr_t bv = __atomic_load_n\(&g_ci_bv_ok, __ATOMIC_ACQUIRE\) \?\s*__atomic_load_n\(&g_bv_obj, __ATOMIC_ACQUIRE\) : 0;\n\s*if \(ci_ok\(bv, CI_BROWSE_VT\) && ci_find\(bv\)\)/' &&
+        extract "$1" '^static void install_phasemeter\(' | grep -q '__atomic_store_n(&g_ci_bv_ok, wref_track(&g_bv_obj, 1, 0) == 1, __ATOMIC_RELEASE);' ||
+        { echo "FAIL  pm4 wiring: BrowseView read for the strip untracked or unchecked"; return 1; }
     # a lane box: render height capped by its waveform widget; only what is still ours goes back
     p=$(extract "$1" '^static void pl_lane\(')
     perl -0ne 'exit !/if \(render > dwh - CI_RENDER_LESS\)\n\s*render = dwh - CI_RENDER_LESS;/' <<<"$p" &&
@@ -1648,6 +1654,9 @@ else failures=$((failures + 1)); fi
 mutate guest/azmod/extras.c "$d/ctl-selfm.c" 's/if \(!self_m && M.known\)\n/if (M.known)\n/'
 mutate guest/azmod/extras.c "$d/ctl-guessmk.c" 's/if \(!self_m && M.known\)\n/if (!self_m)\n/'
 mutate guest/azmod/extras.c "$d/ctl-topfit.c" 's/if \(!fits && \(meter == 2 \|\| compact\)\)/if (0)/'
+mutate guest/azmod/extras.c "$d/ctl-cibvgate.c" 's/uintptr_t bv = __atomic_load_n\(&g_ci_bv_ok, __ATOMIC_ACQUIRE\) \?\s*__atomic_load_n\(&g_bv_obj, __ATOMIC_ACQUIRE\) : 0;/uintptr_t bv = __atomic_load_n(\&g_bv_obj, __ATOMIC_ACQUIRE);/'
+mutate guest/azmod/extras.c "$d/ctl-cibvvt.c" 's/if \(ci_ok\(bv, CI_BROWSE_VT\) && ci_find\(bv\)\)/if (bv \&\& ci_find(bv))/'
+mutate guest/azmod/extras.c "$d/ctl-cibvtrack.c" 's/__atomic_store_n\(&g_ci_bv_ok, wref_track\(&g_bv_obj, 1, 0\) == 1, __ATOMIC_RELEASE\);/__atomic_store_n(\&g_ci_bv_ok, 1, __ATOMIC_RELEASE);/'
 mutate guest/azmod/extras.c "$d/ctl-cihome.c" 's/        \(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);\n//'
 mutate guest/azmod/extras.c "$d/ctl-rcap.c" 's/    if \(render > dwh - CI_RENDER_LESS\)\n        render = dwh - CI_RENDER_LESS;\n//'
 mutate guest/azmod/extras.c "$d/ctl-notours.c" 's/if \(g_pl_box\[i\].mine && \*\(volatile int \*\) \(o \+ OD_RENDER_H\) == g_pl_box\[i\].mine\)/if (g_pl_box[i].mine)/'
@@ -4418,6 +4427,9 @@ control "pm4 wiring: the countdown block not checked"                pm4_wiring 
 control "pm4 wiring: red only from two bars"                         pm4_wiring "$OUT/pm4/ctl-near.c"
 control "pm4 wiring: EP147's countdown never moved back"             pm4_wiring "$OUT/pm4/ctl-nocdw.c"
 control "pm4 wiring: Top on a table it does not fit"                 pm4_wiring "$OUT/pm4/ctl-topfit.c"
+control "pm4 wiring: BrowseView read without its tracking"           pm4_wiring "$OUT/pm4/ctl-cibvgate.c"
+control "pm4 wiring: BrowseView taken without its vtable check"      pm4_wiring "$OUT/pm4/ctl-cibvvt.c"
+control "pm4 wiring: BrowseView pointer never tracked"               pm4_wiring "$OUT/pm4/ctl-cibvtrack.c"
 control "pm4 wiring: the deck strip never sent home"                 pm4_wiring "$OUT/pm4/ctl-cihome.c"
 control "pm4 wiring: a lane's render height uncapped"                pm4_wiring "$OUT/pm4/ctl-rcap.c"
 control "pm4 wiring: EP147's own render height overwritten"          pm4_wiring "$OUT/pm4/ctl-notours.c"

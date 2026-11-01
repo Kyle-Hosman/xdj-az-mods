@@ -1537,8 +1537,10 @@ static void pl_lane(uintptr_t fw, int h, int render) {
 /* ---- Compact Track Info: BROWSE's one-row deck strip on WAVEFORM ------------------------
  * BROWSE's gui::waveform::SimpleWaveformFieldWidget (the four decks' cells in one row, 105 px)
  * is a child of gui::browse::BrowseView. Each screen's view stays alive while another shows
- * (it is only detached from the main window), so the strip is found in BROWSE's tree the
- * first time BROWSE shows; until then 4 DECK keeps its stock track info. While 4 DECK shows
+ * (it is only detached from the main window), so the strip is found among BrowseView's
+ * children: BrowseView as setvis_hook last saw it (EP147 shows it at start-up, on SOURCE),
+ * a tracked pointer (ep_mem.h wref), else through the main window while BROWSE shows. Until
+ * the strip is found 4 DECK keeps its stock track info. While 4 DECK shows
  * with the row on, the strip moves into the WAVEFORM view at the bottom with JUCE's own
  * removeChildComponent / addChildComponent (Key in Track Title's calls) and the view's
  * two-row track info (gui::waveform::PlayerInfoFieldWidget) hides; EP147 keeps updating the
@@ -1554,15 +1556,37 @@ static struct {
     int z, b[4];        /* its index there and its bounds */
     uintptr_t hid;      /* the track info we hid, 0 = none */
 } g_ci;
+static int g_ci_bv_ok; /* g_bv_obj is tracked (install_phasemeter): readable on the message thread */
 static int ci_ok(uintptr_t c, uintptr_t vt) {
     return c && ht_ptr_ok(c) && *(volatile uintptr_t *) c == vt;
 }
-/* the strip, once BROWSE has shown: the main window (from the WAVEFORM view's parents while it
- * shows), then BrowseView among its children's children while BROWSE shows */
+/* the strip among BrowseView bv's children: 1 = found */
+static int ci_find(uintptr_t bv) {
+    uintptr_t k2 = *(volatile uintptr_t *) (bv + 0x40);
+    int n2 = *(volatile int *) (bv + 0x50);
+    for (int z = 0; ht_ptr_ok(k2) && z < n2 && z < 64; z++) {
+        uintptr_t s = *(volatile uintptr_t *) (k2 + 8 * z);
+        if (!ci_ok(s, CI_STRIP_VT))
+            continue;
+        g_ci.strip = s;
+        g_ci.par = bv;
+        g_ci.z = z;
+        for (int i = 0; i < 4; i++)
+            g_ci.b[i] = *(volatile int *) (s + 0x20 + 4 * i);
+        return 1;
+    }
+    return 0;
+}
+/* the strip: under BrowseView as setvis_hook saw it (tracked, so a non-zero value on the message
+ * thread is a live component), else under the main window (from the WAVEFORM view's parents
+ * while it shows), BrowseView among its children's children while BROWSE shows */
 static int ci_strip(uintptr_t v) {
     if (ci_ok(g_ci.strip, CI_STRIP_VT) && ci_ok(g_ci.par, CI_BROWSE_VT))
         return 1;
     g_ci.strip = 0;
+    uintptr_t bv = __atomic_load_n(&g_ci_bv_ok, __ATOMIC_ACQUIRE) ? __atomic_load_n(&g_bv_obj, __ATOMIC_ACQUIRE) : 0;
+    if (ci_ok(bv, CI_BROWSE_VT) && ci_find(bv))
+        return 1;
     if (pl_view_ok(v)) {
         uintptr_t t = v;
         for (int i = 0; i < 8 && ht_ptr_ok(*(volatile uintptr_t *) (t + 0x18)); i++)
@@ -1578,22 +1602,9 @@ static int ci_strip(uintptr_t v) {
         uintptr_t c = *(volatile uintptr_t *) (k1 + 8 * a);
         if (!ht_ptr_ok(c))
             continue;
-        uintptr_t bv = ci_ok(c, CI_BROWSE_VT) ? c : pl_kid(c, CI_BROWSE_VT, 0);
-        if (!bv)
-            continue;
-        uintptr_t k2 = *(volatile uintptr_t *) (bv + 0x40);
-        int n2 = *(volatile int *) (bv + 0x50);
-        for (int z = 0; ht_ptr_ok(k2) && z < n2 && z < 64; z++) {
-            uintptr_t s = *(volatile uintptr_t *) (k2 + 8 * z);
-            if (!ci_ok(s, CI_STRIP_VT))
-                continue;
-            g_ci.strip = s;
-            g_ci.par = bv;
-            g_ci.z = z;
-            for (int i = 0; i < 4; i++)
-                g_ci.b[i] = *(volatile int *) (s + 0x20 + 4 * i);
+        bv = ci_ok(c, CI_BROWSE_VT) ? c : pl_kid(c, CI_BROWSE_VT, 0);
+        if (bv && ci_find(bv))
             return 1;
-        }
     }
     return 0;
 }
@@ -2133,6 +2144,8 @@ static void install_phasemeter(void) {
     uintptr_t cur = 0;
     int p = -2;
     wref_track(&g_pm_view, 1, 0); /* without the destructor hook pm_tick never repaints */
+    /* Compact Track Info finds the strip under it */
+    __atomic_store_n(&g_ci_bv_ok, wref_track(&g_bv_obj, 1, 0) == 1, __ATOMIC_RELEASE);
     /* installed for everyone; pm_on() (the Mod Menu toggle) gates every paint and layout write */
     if (img_q(PM_VIEW_VT + 27 * 8, &cur) && cur == PM_VIEW_POC)
         p = azm_patch_vtable(PM_VIEW_VT + 27 * 8, (void *) pm_poc_hook, (void **) &g_pm_opoc);
