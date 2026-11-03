@@ -740,13 +740,15 @@ suite "clock native" "$d/real/t"
 # Set Time Manually, the pure part: guest/azmod/clock_set.h (with clock_tz.h), and copies with one
 # rule broken
 d="$OUT/clockset"
-for v in real ctl-carry ctl-leap ctl-gap ctl-valid; do mkdir -p "$d/$v"; cp guest/azmod/clock_tz.h "$d/$v/"; done
+for v in real ctl-carry ctl-leap ctl-gap ctl-valid ctl-trail ctl-reboot; do mkdir -p "$d/$v"; cp guest/azmod/clock_tz.h "$d/$v/"; done
 cp guest/azmod/clock_set.h "$d/real/"
 mutate "$d/real/clock_set.h" "$d/ctl-carry/clock_set.h" 's/int n = hi - lo \+ 1, r = \(f->v\[k\] - lo \+ d % n \+ n\) % n;/int n = hi - lo + 1, r = f->v[k] - lo + d; (void) n;/'
 mutate "$d/real/clock_set.h" "$d/ctl-leap/clock_set.h"  's/ \|\| y % 400 == 0;/;/'
 mutate "$d/real/clock_set.h" "$d/ctl-gap/clock_set.h"   's/\*t = l - \(o3 != o2 \? o3 : o2\);/*t = l - o2;/'
-mutate "$d/real/clock_set.h" "$d/ctl-valid/clock_set.h" 's/now >= marker - CS_SLACK\)/1)/'
-for v in real ctl-carry ctl-leap ctl-gap ctl-valid; do
+mutate "$d/real/clock_set.h" "$d/ctl-valid/clock_set.h" 's/same_boot \|\| boot_t >= r->anchor - CS_SLACK :/1 :/'
+mutate "$d/real/clock_set.h" "$d/ctl-trail/clock_set.h" 's/    if \(i != n\)\n        goto bad;\n//'
+mutate "$d/real/clock_set.h" "$d/ctl-reboot/clock_set.h" 's/same_boot \|\| boot_t >= r->anchor - CS_SLACK :/same_boot :/'
+for v in real ctl-carry ctl-leap ctl-gap ctl-valid ctl-trail ctl-reboot; do
     $CC "${CFLAGS[@]}" -I"$d/$v" -I$T -o "$d/$v/t" $T/clockset_test.c
 done
 suite "clock set" "$d/real/t" $T/fixtures/zoneinfo
@@ -4156,6 +4158,8 @@ control "clock set: a field carries instead of wrapping"   "$OUT/clockset/ctl-ca
 control "clock set: 2000 taken as a common year"           "$OUT/clockset/ctl-leap/t" $T/fixtures/zoneinfo
 control "clock set: a skipped local time lands an hour early" "$OUT/clockset/ctl-gap/t" $T/fixtures/zoneinfo
 control "clock set: a set time shown after a power-off reset" "$OUT/clockset/ctl-valid/t" $T/fixtures/zoneinfo
+control "clock set: a record with trailing bytes taken"      "$OUT/clockset/ctl-trail/t" $T/fixtures/zoneinfo
+control "clock set: a set lost on a reboot"                  "$OUT/clockset/ctl-reboot/t" $T/fixtures/zoneinfo
 control "clock_tz: half-hour offsets shown as whole hours"  "$OUT/clocktz/ctl-half/t" $T/fixtures/zoneinfo
 control "clock_tz: 24-hour seconds not shown"               "$OUT/clocktz/ctl-sec24/t" $T/fixtures/zoneinfo
 control "clock_tz: 12-hour seconds not shown"               "$OUT/clocktz/ctl-sec12/t" $T/fixtures/zoneinfo

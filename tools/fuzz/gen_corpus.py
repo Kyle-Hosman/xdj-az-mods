@@ -362,6 +362,16 @@ def clocktz():
     yield "no-footer", b"\4" + tzif(us[:3], [1, 0, 1], [-7 * 3600, -6 * 3600], b"")
     yield "v1-only", b"\5" + tzif([], [], [0], b"", ver=b"\0")
 
+@seed("clockset")
+def clockset():
+    boot = b"0b6d3f2e-9a41-4c7e-8f10-2d5b6a7c8e90"
+    mt = struct.pack("<q", 1793451420)
+    yield "record", mt + b"\0" + b"azclock1 " + boot + b" 946685400 846766020\n"
+    yield "record-behind", mt + b"\5" + b"azclock1 " + boot + b" 1793472825 -21600"
+    yield "marker", mt + b"\1"
+    yield "marker-old", struct.pack("<q", 1358499000) + b"\2"
+    yield "bad-version", mt + b"\3" + b"azclock2 " + boot + b" 1 2\n"
+
 @seed("wzsave")
 def wzsave():
     for t in ("2/1", "1/1", "1/2", "1/4", "1/8", "1/16"):

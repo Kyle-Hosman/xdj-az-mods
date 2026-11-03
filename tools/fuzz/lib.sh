@@ -29,6 +29,7 @@
 #   mp4       MP3 / M4A source tracks: ID3 + Info/Xing, the MP4 box walk (guest/azstem/ofsload.c)
 #   hcanlz    a track's analysis file, for its hot cues (guest/azmod/hc_anlz.h)
 #   clocktz   a time zone file for the Clock readout (guest/azmod/clock_tz.h)
+#   clockset  the Clock's manual set record in the deck's settings (guest/azmod/clock_set.h)
 #   wzsave    Remember Waveform Zoom's saved value, azmod.conf's wave.zoom (guest/azmod/wave_zoom.h)
 #   inputmem  the deck's settings file, for Channel Input Select Memory (guest/azmod/input_memory.h)
 #   cmbrowse  Community Mods > Browse: a mod's category and updated values and the
@@ -37,7 +38,7 @@
 #   colwidths Column Edit's saved column widths (guest/azmod/browse_edit.h)
 #   colfields Column Edit's saved column fields, and a library text as a field shows it
 #             (guest/azmod/browse_fields.h)
-FZ_NAMES="azconf cmjson cmcat png bus drumwav stemname ofscache sdklib pdbsync elfcheck mp4 hcanlz clocktz cmbrowse inputmem fcopy colwidths colfields wzsave"
+FZ_NAMES="azconf cmjson cmcat png bus drumwav stemname ofscache sdklib pdbsync elfcheck mp4 hcanlz clocktz clockset cmbrowse inputmem fcopy colwidths colfields wzsave"
 FZ_T=tools/fuzz
 FZ_UT=tools/unit-tests
 
@@ -76,6 +77,9 @@ fz_prepare() {
         cp guest/azmod/pdb_sync.c "$dir/" ;;
     clocktz)
         cp guest/azmod/clock_tz.h "$dir/" ;;
+    clockset)
+        cp guest/azmod/clock_tz.h guest/azmod/clock_set.h "$dir/"
+        grep -q 'static inline int cs_rec_parse' "$dir/clock_set.h" ;;
     wzsave)
         cp guest/azmod/wave_zoom.h "$dir/"
         grep -q 'static inline uint32_t wz_parse' "$dir/wave_zoom.h" ;;
@@ -144,6 +148,7 @@ fz_cflags() {   # <name> <dir>: per-harness compile arguments (sources and inclu
     png)    FZ_ARGS=(-DPNG_INC="\"$dir/png.inc\"" $FZ_T/png_fuzz.c) ;;
     pdbsync) FZ_ARGS=(-I"$dir" $FZ_T/pdbsync_fuzz.c) ;;
     clocktz) FZ_ARGS=(-I"$dir" $FZ_T/clocktz_fuzz.c) ;;
+    clockset) FZ_ARGS=(-I"$dir" $FZ_T/clockset_fuzz.c) ;;
     wzsave) FZ_ARGS=(-I"$dir" $FZ_T/wzsave_fuzz.c) ;;
     inputmem) FZ_ARGS=(-I"$dir" $FZ_T/inputmem_fuzz.c) ;;
     colwidths) FZ_ARGS=(-I"$dir" $FZ_T/colwidths_fuzz.c) ;;

@@ -2321,12 +2321,12 @@ static void ov_poll_readouts(struct overlay_ctx *c) {
 /* The Clock readout's text, once a second. It stays "" (drawn as --:--, "Not set" in the menu)
  * until the system clock is synchronized, by the rule timedatectl uses (systemd ntp_synced):
  * the kernel's maximum error, from adjtimex(), under 16 s. It is at that limit from boot (the
- * deck's RTC does not keep time through a power-off) until systemd-timesyncd's first NTP answer,
- * and again after any settimeofday(); without NTP updates it grows by 500 ppm and passes 16 s
- * after about 9 hours. A time set by hand (Set Time Manually) is shown too, as long as the
- * clock has not fallen back below it: the set leaves an empty file whose modification time is
- * the time set (CLOCK_SET_MARK), and a power-off that resets the RTC puts the clock before it
- * (clock_set.h cs_valid). NTP, when it answers, sets the time over it.
+ * deck's RTC does not keep time through a power-off) until systemd-timesyncd's first NTP answer;
+ * without NTP updates it grows by 500 ppm and passes 16 s after about 9 hours. A time set by
+ * hand (Set Time Manually) is shown too: it never changes the system time (a backward step
+ * stalls EP147, whose timed waits run on the wall clock), it is kept as an offset over it in
+ * CLOCK_SET_FILE, and holds until a power-off resets the RTC (clock_set.h cs_shown). NTP, when
+ * it answers, takes over and the file is removed.
  * The zone file is read when the zone changes; a zone that cannot be read or answered
  * (clock_tz.h) also leaves the text empty. */
 static void ov_clock_log(const char *fmt, ...) {
@@ -2340,52 +2340,71 @@ static void ov_clock_log(const char *fmt, ...) {
     va_end(ap);
     fclose(f);
 }
-#define CLOCK_SET_MARK "/home/root/settings/azmod-clock-set"
-/* Set Time Manually: the system time, the RTC (UTC, as the kernel reads it at boot) and the
- * marker; the time of the marker, or 0 when the time could not be set. */
-static int64_t ov_clock_set(int64_t t) {
-    struct timespec ts = {(time_t) t, 0};
-    if (clock_settime(CLOCK_REALTIME, &ts) != 0) {
-        ov_clock_log("set time %lld: clock_settime failed (errno %d)\n", (long long) t, errno);
-        return 0;
-    }
-    struct tm tm;
-    time_t tt = (time_t) t;
-    int rtc = -1, fd = open("/dev/rtc0", O_RDONLY | O_CLOEXEC);
-    if (fd >= 0 && gmtime_r(&tt, &tm)) {
-        struct rtc_time r;
-        memset(&r, 0, sizeof r);
-        r.tm_sec = tm.tm_sec, r.tm_min = tm.tm_min, r.tm_hour = tm.tm_hour;
-        r.tm_mday = tm.tm_mday, r.tm_mon = tm.tm_mon, r.tm_year = tm.tm_year;
-        rtc = ioctl(fd, RTC_SET_TIME, &r);
-    }
-    if (fd >= 0)
-        close(fd);
-    int64_t mark = 0;
-    int mf = open(CLOCK_SET_MARK, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+#define CLOCK_SET_FILE "/home/root/settings/azmod-clock-set"
+#define CLOCK_BOOT_ID "/proc/sys/kernel/random/boot_id"
+/* this boot's id (CS_BOOT_LEN characters) into out, or "" */
+static void ov_boot_id(char out[CS_BOOT_LEN + 1]) {
+    out[0] = 0;
+    int fd = open(CLOCK_BOOT_ID, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return;
+    ssize_t n = read(fd, out, CS_BOOT_LEN);
+    close(fd);
+    out[n == CS_BOOT_LEN ? CS_BOOT_LEN : 0] = 0;
+}
+/* the system time at this boot's start: now less the time since boot (suspend included) */
+static int64_t ov_boot_time(int64_t now) {
+    struct timespec b;
+    return clock_gettime(CLOCK_BOOTTIME, &b) == 0 ? now - (int64_t) b.tv_sec : now;
+}
+static void ov_clock_read(struct cs_rec *r) {
+    char b[CS_REC_MAX];
     struct stat st;
-    if (mf >= 0) {
-        if (futimens(mf, NULL) == 0 && fstat(mf, &st) == 0)
-            mark = (int64_t) st.st_mtime;
-        close(mf);
+    memset(r, 0, sizeof *r);
+    int fd = open(CLOCK_SET_FILE, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return;
+    ssize_t n = fstat(fd, &st) == 0 ? read(fd, b, sizeof b) : -1;
+    close(fd);
+    if (n >= 0 && (size_t) n < sizeof b)
+        cs_rec_parse(b, (size_t) n, (int64_t) st.st_mtime, r);
+}
+/* Set Time Manually: the offset of UTC time t over the system time now, written beside the
+ * file and moved over it; *r is the set, or unchanged when it could not be kept. */
+static void ov_clock_set(int64_t t, struct cs_rec *r) {
+    char boot[CS_BOOT_LEN + 1], line[CS_REC_MAX];
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ov_boot_id(boot);
+    int n = cs_rec_format(line, sizeof line, boot, (int64_t) ts.tv_sec, t);
+    int fd = n > 0 ? open(CLOCK_SET_FILE ".new", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644) : -1;
+    int ok = fd >= 0 && write(fd, line, (size_t) n) == n;
+    if (fd >= 0)
+        ok &= close(fd) == 0;
+    ok = ok && rename(CLOCK_SET_FILE ".new", CLOCK_SET_FILE) == 0;
+    if (!ok) {
+        unlink(CLOCK_SET_FILE ".new");
+        ov_clock_log("set time %lld: not kept (boot id %s, errno %d)\n", (long long) t, boot[0] ? "ok" : "unread", errno);
+        return;
     }
-    ov_clock_log("set time %lld: system ok, rtc %s, marker %lld\n", (long long) t, rtc == 0 ? "ok" : "failed",
-                 (long long) mark);
-    return mark ? mark : t;
+    cs_rec_parse(line, (size_t) n, 0, r);
+    ov_clock_log("set time %lld: offset %lld over the system time\n", (long long) t, (long long) r->off);
 }
 static void ov_poll_clock(struct overlay_ctx *c) {
     static long tt;
-    static int loaded = -1, zone_ok, last_sync = -1;
-    static int64_t mark = -1;
+    static int loaded = -1, zone_ok, last_sync = -1, read_once;
+    static struct cs_rec rec;
+    static char boot[CS_BOOT_LEN + 1];
     static struct ctz z;
     static unsigned char zbuf[1 << 16];
     int64_t req = __atomic_exchange_n(&g_azmod_clock_set_req, 0, __ATOMIC_ACQ_REL);
-    if (mark < 0) { /* the last manual set, once per run */
-        struct stat st;
-        mark = stat(CLOCK_SET_MARK, &st) == 0 ? (int64_t) st.st_mtime : 0;
+    if (!read_once) { /* the last manual set and this boot's id, once per run */
+        read_once = 1;
+        ov_clock_read(&rec);
+        ov_boot_id(boot);
     }
     if (req)
-        mark = ov_clock_set(req);
+        ov_clock_set(req, &rec);
     long nowt = now_ms();
     if (!req && nowt - tt < 1000)
         return;
@@ -2412,13 +2431,21 @@ static void ov_poll_clock(struct overlay_ctx *c) {
         ov_clock_log("system clock %s (adjtimex %d, status 0x%x, maxerror %ld us)\n",
                      sync ? "synchronized" : "not synchronized", st, (unsigned) tx.status, (long) tx.maxerror);
     }
+    if (sync && rec.has) { /* NTP has the time: the manual set is done with */
+        unlink(CLOCK_SET_FILE);
+        memset(&rec, 0, sizeof rec);
+        ov_clock_log("synchronized: the manual set removed\n");
+    }
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
+    int64_t now = (int64_t) ts.tv_sec, shown = 0;
+    int same = rec.boot[0] && !strcmp(rec.boot, boot);
+    int has = cs_shown(sync, &rec, same, now, ov_boot_time(now), &shown);
+    __atomic_store_n(&g_azmod_clock_off, has ? shown - now : 0, __ATOMIC_RELAXED);
     char t[sizeof g_state.clock_text] = "";
     int32_t off;
-    if (cs_valid(sync, mark, (int64_t) ts.tv_sec) && zone_ok && ctz_offset(&z, (int64_t) ts.tv_sec, &off) == 0) {
-        ctz_format(t, sizeof t, (int64_t) ts.tv_sec, off, az_get(AZF_CLOCK_24H) == 1,
-                   az_get(AZF_CLOCK_SECONDS) == 1);
+    if (has && zone_ok && ctz_offset(&z, shown, &off) == 0) {
+        ctz_format(t, sizeof t, shown, off, az_get(AZF_CLOCK_24H) == 1, az_get(AZF_CLOCK_SECONDS) == 1);
         if (k == 0)
             strncat(t, " UTC", sizeof t - strlen(t) - 1);
     }

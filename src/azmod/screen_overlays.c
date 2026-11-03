@@ -305,7 +305,7 @@ static bool input_clock_tz(azmod_state *s, const azmod_fb *fb, int touch_x, int 
  * row has a minus and a plus square: a tap on one steps the value. The knob moves between rows;
  * a press on a value row starts editing it (the knob then steps the value) and a second press
  * ends that. Set Time hands the UTC time to the overlay thread (g_azmod_clock_set_req), which
- * sets the system time and the RTC (mod_menu_overlay.c ov_poll_clock), and goes back to the
+ * keeps it as an offset over the system time (mod_menu_overlay.c ov_poll_clock), and goes back to the
  * Clock screen; BACK goes back without a change. The picker starts at the time when it is known,
  * else at the newest file time on a stick (the last export), else at the range's start
  * (clock_set.h cs_seed). */
@@ -314,6 +314,7 @@ static bool input_clock_tz(azmod_state *s, const azmod_fb *fb, int touch_x, int 
 #endif
 #define CS_SET_ROWN CS_NFIELD /* the Set Time row */
 int64_t g_azmod_clock_set_req; /* menu.h: the UTC time to set, 0 = none; __atomic only */
+int64_t g_azmod_clock_off;     /* menu.h: the Clock's offset over the system time; __atomic only */
 static struct cs_fields g_cset;
 static bool g_cset_edit;
 static struct ctz g_cset_z;
@@ -361,7 +362,8 @@ static void clock_set_open(azmod_state *s) {
                 g_cset_zone = 1;
         }
     }
-    int64_t t = cs_seed(s->clock_text[0] != 0, (int64_t) time(NULL), s->clock_text[0] ? 0 : cs_newest_stick());
+    int64_t now = (int64_t) time(NULL) + __atomic_load_n(&g_azmod_clock_off, __ATOMIC_RELAXED);
+    int64_t t = cs_seed(s->clock_text[0] != 0, now, s->clock_text[0] ? 0 : cs_newest_stick());
     cs_from_utc(t, cs_off_at(t), &g_cset);
     g_cset_edit = false;
     s->mode = AZ_CLOCK_SET;
