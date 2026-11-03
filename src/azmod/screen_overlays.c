@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* screen_overlays.c: Overlays (AZ_OVERLAYS): its rows, and the deck-screen readouts it switches (FPS, CPU, RAM, temperature, clock).
  * Part of the Mod Menu's one translation unit: #included by menu.c, in the order listed there. */
-/* The rows of an Extras row's own screen (AZ_OVERLAYS, AZ_CLOCK, AZ_BROWSE_VIEW): a switch first
+/* The rows of an Extras row's own screen (AZ_OVERLAYS, AZ_CLOCK, AZ_BROWSE_VIEW, AZ_PHASE_METER): a switch first
  * (a group has none), then the table's rows under it, in their order. */
 #define OVERLAYS_MAX 16
 /* The Clock's time zone: a pseudo row (not a table row; its value is azmod.conf's "clock.tz",
@@ -10,20 +10,24 @@
 _Static_assert(C_TZ_ROW > AZI_COUNT, "the time zone pseudo row must not collide with item ids");
 /* Set Time Manually: a pseudo row after the time zone; it opens the picker (AZ_CLOCK_SET). */
 #define C_SET_ROW 0x301
-/* the row a screen belongs to: Overlays, the Clock or Browse View Mods */
+/* the row a screen belongs to: Overlays, the Clock, Browse View Mods or the Phase Meter */
 static int sub_head(int mode) {
-    return mode == AZ_CLOCK ? AZF_CLOCK : mode == AZ_BROWSE_VIEW ? AZF_BROWSE_VIEW
-                                                                 : AZF_OVERLAYS;
+    return mode == AZ_CLOCK         ? AZF_CLOCK
+           : mode == AZ_BROWSE_VIEW ? AZF_BROWSE_VIEW
+           : mode == AZ_PHASE_METER ? AZF_PHASE_METER
+                                    : AZF_OVERLAYS;
 }
 /* the screen a row opens, if it is one of these */
 static int sub_screen(int it) {
     return it == AZF_CLOCK ? AZ_CLOCK : it == AZF_OVERLAYS  ? AZ_OVERLAYS
                                     : it == AZF_BROWSE_VIEW ? AZ_BROWSE_VIEW
+                                    : it == AZF_PHASE_METER ? AZ_PHASE_METER
                                                             : 0;
 }
 /* is this one of those screens */
 static bool sub_mode(int mode) {
-    return mode == AZ_OVERLAYS || mode == AZ_CLOCK || mode == AZ_BROWSE_VIEW;
+    return mode == AZ_OVERLAYS || mode == AZ_CLOCK || mode == AZ_BROWSE_VIEW ||
+           mode == AZ_PHASE_METER;
 }
 static int overlays_rows(int head, int *out) {
     int ord[AZI_COUNT], n = menu_order(ord), m = 0;
@@ -480,7 +484,9 @@ static bool input_clock_set(azmod_state *s, const azmod_fb *fb, int touch_x, int
 
 static const char *overlays_label(int it) {
     if (az_screen(it) >= 0) /* the switch at the top: the row that opened the screen */
-        return it == AZF_CLOCK ? "Show Clock" : "Show Overlays";
+        return it == AZF_CLOCK         ? "Show Clock"
+               : it == AZF_PHASE_METER ? "Show Phase Meter"
+                                       : "Show Overlays";
     return it == C_TZ_ROW ? "Time Zone" : it == C_SET_ROW ? "Set Time Manually"
                                                           : az_label(it);
 }

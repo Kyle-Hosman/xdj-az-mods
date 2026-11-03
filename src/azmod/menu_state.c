@@ -134,6 +134,7 @@ bool azmod_back(azmod_state *s) {
     case AZ_OVERLAYS:
     case AZ_CLOCK:
     case AZ_BROWSE_VIEW:
+    case AZ_PHASE_METER:
         s->menu_sel = sub_head(s->mode);
         s->mode = AZ_OPEN;
         return true;

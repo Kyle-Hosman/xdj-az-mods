@@ -55,6 +55,12 @@
 #                (link_members.h, link_members.c, mod_menu_overlay.c ov_sync_stem_volume)
 #   feed lock    60 FPS Waveforms: each deck's position feed runs once per displayed frame, validated
 #                at use, dropped when its own timer stops, its own timer the fallback (waveform.c)
+#   phase meter 4 DECK  the countdown text (bars and beat, none past 256), and the strips draw a
+#                ruler only from a known phase (the master's never in its own lane), read
+#                countdowns only behind checked blocks, are red under four bars, and put the stock
+#                lanes back; Top: only on a table it fits, its rulers only from known phases,
+#                panels, boxes and frames put back; Compact Track Info: the strip sent home,
+#                the render height capped, only ours put back
 #   wave identity  waveform stem scaling and the stem-lane zoom model keyed by the rendering deck
 #                (update() or the Content table): unknown = drawn stock and no model, never another
 #                deck's; two decks' providers at one address keep separate models (waveform.c)
@@ -1579,6 +1585,87 @@ elif mpgate_wiring guest/azmod/menu_popup.c; then
     echo "PASS  menu first button: mp_click_hook refuses through mp_b1_refused"
 else failures=$((failures + 1)); fi
 mutate guest/azmod/menu_popup.c "$d/ctl-nogate.c" 's/clicked == k1 && mp_b1_refused\(type\)/clicked == k1/'
+# ---------------------------------------------------------------- phase meter 4 DECK
+# guest/azmod/extras.c: the countdown text (pm_cd_fmt, extracted and run), and the wiring of the
+# 4 DECK strips: the master's ruler only from a known master phase and never in the master's
+# own lane, a lane's own ruler only from a known phase, the countdowns read only behind both
+# checked shared_ptr blocks, red under four bars, and the lanes and EP147's countdown put back
+# with the stock table.
+d="$OUT/pm4"; mkdir -p "$d"
+{ grep '^#define PM_CD_MAX ' guest/azmod/extras.c; extract guest/azmod/extras.c '^static void pm_cd_fmt\('; } > "$d/real.inc"
+grep -q 'snprintf(t, 8, "%02u.%u", (n - 1) / 4, (n - 1) % 4 + 1);' "$d/real.inc" || { echo "extraction of pm_cd_fmt failed"; exit 2; }
+mutate "$d/real.inc" "$d/ctl-nominus.inc" 's/\(n - 1\) \/ 4, \(n - 1\) % 4 \+ 1/n \/ 4, n % 4/'
+mutate "$d/real.inc" "$d/ctl-nonone.inc" 's/    if \(n > PM_CD_MAX\)\n        strcpy\(t, "--.-"\);\n    else //'
+for v in real ctl-nominus ctl-nonone; do
+    $CC "${CFLAGS[@]}" -I$T -DPMCD_SRC="\"$d/$v.inc\"" -o "$d/$v" $T/pmcd_test.c
+done
+suite "phase meter countdown" "$d/real"
+pm4_wiring() { # $1 = extras.c
+    local p
+    p=$(extract "$1" '^static void pm4_paint\(')
+    perl -0ne 'exit !/if \(!self_m && M.known\)\n\s*pm_ruler_at\(g, M.ph,/' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: the master's ruler without a known phase, or in the master's own lane"; return 1; }
+    perl -0ne 'exit !/int ok = pm_local_phase\(d, &oph\);\n\s*if \(!self_m && M.known\)[^\n]*\n[^\n]*\n\s*else\n[^\n]*\n\s*if \(ok\)\n\s*pm_ruler_at\(g, oph,/' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a lane's own ruler without a known phase"; return 1; }
+    p=$(extract "$1" '^static long pm_model_hook\(')
+    grep -q '(uint32_t) idx > 3' <<<"$p" && grep -q 'cvt == PM_CUESTATE_CTRL_VT && cs == csc + 0x10' <<<"$p" &&
+        grep -q 'cvt == PM_COUNTDOWN_CTRL_VT &&' <<<"$p" && grep -q 'cd == cdc + 0x10 && own_q(cd + 0x160, &v))' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: the countdown read without its deck or shared_ptr checks"; return 1; }
+    grep -q '^#define PM_CUE_NEAR 15 ' "$1" ||
+        { echo "FAIL  pm4 wiring: the countdown is not red under four bars"; return 1; }
+    p=$(extract "$1" '^static void pl_tick4\(')
+    extract "$1" '^static void pl_layout4\(' | grep -q 'L->f = s\[0\];' &&
+        grep -q 'pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter != 0, -4000, 0, 0);' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: the stock lanes or EP147's countdown not put back"; return 1; }
+    # Top and Compact Track Info only on a table they fit
+    perl -0ne 'exit !/fits = fits && g_pl_stock4\[1 \+ i\] - g_pl_stock4\[i\] >= PM4T_PITCH;\n\s*if \(!fits && \(meter == 2 \|\| compact\)\)/' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: Top or Compact Track Info laid out on a table it does not fit"; return 1; }
+    # the strip in WAVEFORM only while 4 DECK shows with the row on; home to BrowseView otherwise
+    grep -q 'int compact = on4 && have;' <<<"$p" && grep -q 'ci_place(v, compact);' <<<"$p" &&
+        extract "$1" '^static void ci_place\(' | perl -0ne 'exit !/if \(ci_ok\(s, CI_STRIP_VT\) && cur != g_ci.par && ci_ok\(g_ci.par, CI_BROWSE_VT\)\) \{\n[^\n]*\n[^\n]*\n\s*\(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);/' ||
+        { echo "FAIL  pm4 wiring: the deck strip not sent home to BROWSE"; return 1; }
+    # the strip found without a visit to BROWSE: under BrowseView as setvis_hook saw it, read only
+    # while that pointer is tracked (cleared by the component destructor hook) and vtable-checked
+    extract "$1" '^static int ci_strip\(' |
+        perl -0ne 'exit !/uintptr_t bv = __atomic_load_n\(&g_ci_bv_ok, __ATOMIC_ACQUIRE\) \?\s*__atomic_load_n\(&g_bv_obj, __ATOMIC_ACQUIRE\) : 0;\n\s*if \(ci_ok\(bv, CI_BROWSE_VT\) && ci_find\(bv\)\)/' &&
+        extract "$1" '^static void install_phasemeter\(' | grep -q '__atomic_store_n(&g_ci_bv_ok, wref_track(&g_bv_obj, 1, 0) == 1, __ATOMIC_RELEASE);' ||
+        { echo "FAIL  pm4 wiring: BrowseView read for the strip untracked or unchecked"; return 1; }
+    # a lane box: render height capped by its waveform widget; only what is still ours goes back
+    p=$(extract "$1" '^static void pl_lane\(')
+    perl -0ne 'exit !/if \(render > dwh - CI_RENDER_LESS\)\n\s*render = dwh - CI_RENDER_LESS;/' <<<"$p" &&
+        grep -q 'if (g_pl_box\[i\].mine && \*(volatile int \*) (o + OD_RENDER_H) == g_pl_box\[i\].mine)' <<<"$p" &&
+        grep -q 'int still = g_pl_box\[i\].h && \*(volatile int \*) (box + 0x2c) == g_pl_box\[i\].h;' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a lane's render height uncapped, or EP147's own geometry overwritten"; return 1; }
+    p=$(extract "$1" '^static void pl_squeeze\(')
+    perl -0ne 'exit !/if \(!on\) \{\n\s*if \(art\)\n\s*pl_yscale\(x, 1.0f\);\n\s*pl_restore\(x\);/' <<<"$p" &&
+        perl -0ne 'exit !/\} else\n\s*pl_restore\(c\);/' <<<"$p" &&
+        grep -q 'on = on && j < 4 && s\[3\] > 40;' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a moved panel, its children or its frame not put back"; return 1; }
+    # Top rows: a deck's ruler only from its known phase
+    p=$(extract "$1" '^static void pm4_paint_top\(')
+    perl -0ne 'exit !/if \(pm_local_phase\(d, &oph\)\)\n\s*pm_ruler_at\(g, oph,/' <<<"$p" ||
+        { echo "FAIL  pm4 wiring: a Top ruler from an unknown phase"; return 1; }
+}
+echo "=== phase meter 4 DECK wiring ==="
+if ! plain_only "phase meter 4 DECK wiring"; then :
+elif pm4_wiring guest/azmod/extras.c; then
+    echo "PASS  phase meter 4 DECK: rulers only from known phases; countdowns checked; stock put back"
+else failures=$((failures + 1)); fi
+mutate guest/azmod/extras.c "$d/ctl-selfm.c" 's/if \(!self_m && M.known\)\n/if (M.known)\n/'
+mutate guest/azmod/extras.c "$d/ctl-guessmk.c" 's/if \(!self_m && M.known\)\n/if (!self_m)\n/'
+mutate guest/azmod/extras.c "$d/ctl-topfit.c" 's/if \(!fits && \(meter == 2 \|\| compact\)\)/if (0)/'
+mutate guest/azmod/extras.c "$d/ctl-cibvgate.c" 's/uintptr_t bv = __atomic_load_n\(&g_ci_bv_ok, __ATOMIC_ACQUIRE\) \?\s*__atomic_load_n\(&g_bv_obj, __ATOMIC_ACQUIRE\) : 0;/uintptr_t bv = __atomic_load_n(\&g_bv_obj, __ATOMIC_ACQUIRE);/'
+mutate guest/azmod/extras.c "$d/ctl-cibvvt.c" 's/if \(ci_ok\(bv, CI_BROWSE_VT\) && ci_find\(bv\)\)/if (bv \&\& ci_find(bv))/'
+mutate guest/azmod/extras.c "$d/ctl-cibvtrack.c" 's/__atomic_store_n\(&g_ci_bv_ok, wref_track\(&g_bv_obj, 1, 0\) == 1, __ATOMIC_RELEASE\);/__atomic_store_n(\&g_ci_bv_ok, 1, __ATOMIC_RELEASE);/'
+mutate guest/azmod/extras.c "$d/ctl-cihome.c" 's/        \(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-rcap.c" 's/    if \(render > dwh - CI_RENDER_LESS\)\n        render = dwh - CI_RENDER_LESS;\n//'
+mutate guest/azmod/extras.c "$d/ctl-notours.c" 's/if \(g_pl_box\[i\].mine && \*\(volatile int \*\) \(o \+ OD_RENDER_H\) == g_pl_box\[i\].mine\)/if (g_pl_box[i].mine)/'
+mutate guest/azmod/extras.c "$d/ctl-topart.c" 's/            if \(art\)\n                pl_yscale\(x, 1.0f\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-toprow.c" 's/        if \(pm_local_phase\(d, &oph\)\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
+mutate guest/azmod/extras.c "$d/ctl-noown.c" 's/        if \(ok\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
+mutate guest/azmod/extras.c "$d/ctl-nocvt.c" 's/cvt == PM_COUNTDOWN_CTRL_VT &&\s*//'
+mutate guest/azmod/extras.c "$d/ctl-near.c" 's/^#define PM_CUE_NEAR 15 /#define PM_CUE_NEAR 8 /m'
+mutate guest/azmod/extras.c "$d/ctl-nocdw.c" 's/            pl_move\(pl_kid\(fw, PM4_CDW_VT, 0\), meter != 0, -4000, 0, 0\);\n//'
 # ---------------------------------------------------------------- drum roll tile 8 (validated chain)
 d="$OUT/drumtile8"; mkdir -p "$d"
 extract guest/azmod/drum_roll_display.c '^static void drum8_index_apply\(void\) \{' > "$d/real.inc"
@@ -4331,6 +4418,23 @@ control "stem volume link: ov_sync_stem_volume keeps the old rule"   stemvol_wir
 control "stem volume link: the member watch not installed"           stemvol_wiring "$OUT/stemvol/ctl-noinstall.c"
 control "menu first button: HISTORY's ALL DELETE refused (the old gate)" "$OUT/mpgate/ctl-history/t"
 control "menu first button: mp_click_hook refuses without the gate"      mpgate_wiring "$OUT/mpgate/ctl-nogate.c"
+control "phase meter countdown: bars and beat without the minus one" "$OUT/pm4/ctl-nominus"
+control "phase meter countdown: a value past 256 printed as a count" "$OUT/pm4/ctl-nonone"
+control "pm4 wiring: the master's ruler in the master's own lane"    pm4_wiring "$OUT/pm4/ctl-selfm.c"
+control "pm4 wiring: the master's ruler from an unknown phase"       pm4_wiring "$OUT/pm4/ctl-guessmk.c"
+control "pm4 wiring: a lane's ruler from an unknown phase"           pm4_wiring "$OUT/pm4/ctl-noown.c"
+control "pm4 wiring: the countdown block not checked"                pm4_wiring "$OUT/pm4/ctl-nocvt.c"
+control "pm4 wiring: red only from two bars"                         pm4_wiring "$OUT/pm4/ctl-near.c"
+control "pm4 wiring: EP147's countdown never moved back"             pm4_wiring "$OUT/pm4/ctl-nocdw.c"
+control "pm4 wiring: Top on a table it does not fit"                 pm4_wiring "$OUT/pm4/ctl-topfit.c"
+control "pm4 wiring: BrowseView read without its tracking"           pm4_wiring "$OUT/pm4/ctl-cibvgate.c"
+control "pm4 wiring: BrowseView taken without its vtable check"      pm4_wiring "$OUT/pm4/ctl-cibvvt.c"
+control "pm4 wiring: BrowseView pointer never tracked"               pm4_wiring "$OUT/pm4/ctl-cibvtrack.c"
+control "pm4 wiring: the deck strip never sent home"                 pm4_wiring "$OUT/pm4/ctl-cihome.c"
+control "pm4 wiring: a lane's render height uncapped"                pm4_wiring "$OUT/pm4/ctl-rcap.c"
+control "pm4 wiring: EP147's own render height overwritten"          pm4_wiring "$OUT/pm4/ctl-notours.c"
+control "pm4 wiring: a number box frame left scaled"                 pm4_wiring "$OUT/pm4/ctl-topart.c"
+control "pm4 wiring: a Top ruler from an unknown phase"              pm4_wiring "$OUT/pm4/ctl-toprow.c"
 control "duplicate #define: a repeated definition is reported"    dupdefine_ctl
 control "cm_ask: a second press retargets the open question" "$OUT/cmask/ctl-retarget"
 control "cm_ask: the request is sent whatever the answer"   "$OUT/cmask/ctl-noyes"
