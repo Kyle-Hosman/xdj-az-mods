@@ -1195,14 +1195,18 @@ suite "strip neutral" "$d/real"
 # ---------------------------------------------------------------- drum feed (master BPM)
 d="$OUT/drumfeed"; mkdir -p "$d"
 { extract guest/azmod/stems_display.c '^static float drum_feed_bpm\('
-  extract guest/azmod/stems_display.c '^static int drum_feed_lead\('; } > "$d/real.inc"
+  extract guest/azmod/stems_display.c '^static int drum_feed_lead\('
+  extract guest/azmod/stems_display.c '^static int drum_feed_paused_lead\('; } > "$d/real.inc"
+grep -q 'static int drum_feed_paused_lead' "$d/real.inc" || { echo "extraction of drum_feed_paused_lead failed"; exit 2; }
 grep -q 'static int drum_feed_lead' "$d/real.inc" || { echo "extraction of drum_feed_lead failed"; exit 2; }
 grep -q 'DBL_MAX' "$d/real.inc" || { echo "extraction of drum_feed_bpm failed"; exit 2; }
 mutate "$d/real.inc" "$d/ctl-nomaster.inc" 's/if \(live != DBL_MAX \|\|/if (1 ||/'                 # empty deck never takes the master
 mutate "$d/real.inc" "$d/ctl-anyunknown.inc" 's/live != DBL_MAX \|\| //'                         # any unknown BPM takes the master's
 mutate "$d/real.inc" "$d/ctl-trust.inc" 's/master < 0 \|\| (.*?) \|\| !master_ok/$1/'          # unknown / unreadable master trusted
 mutate "$d/real.inc" "$d/ctl-leadany.inc" 's/if \(live != DBL_MAX \|\| master == d\)/if (master == d)/'   # a loaded deck follows the master
-for v in real ctl-nomaster ctl-anyunknown ctl-trust ctl-leadany; do
+mutate "$d/real.inc" "$d/ctl-pausedoff.inc" 's/if \(!on \|\| master < 0/if (master < 0/'          # Own Track still follows the master
+mutate "$d/real.inc" "$d/ctl-pausedself.inc" 's/ \|\| master == d \|\| !master_ok\)/ || !master_ok)/'   # the master follows itself
+for v in real ctl-nomaster ctl-anyunknown ctl-trust ctl-leadany ctl-pausedoff ctl-pausedself; do
     $CC "${CFLAGS[@]}" -I$T -DFEED_INC="\"$d/$v.inc\"" -o "$d/$v" $T/drumfeed_test.c
 done
 suite "drum feed" "$d/real"
@@ -2124,15 +2128,24 @@ mutate "$d/real.c" "$d/ctl-glide.c" 's/sm_gain\[DRUM_SIDES\] = \{1\.f, 1\.f, 1\.
 # control 13: the loaded bank reloaded at every stick discovery, Drum Roll on or off
 mutate "$d/real.c" "$d/ctl-bank0.c" 's/int req = atomic_load_explicit\(&g_drum_req_bank, memory_order_relaxed\);/int req = atomic_load_explicit(\&g_drum_bank, memory_order_relaxed);/'
 # control 14: an empty deck never follows the master (its roll free-runs, off the master's beat)
-mutate "$d/real.c" "$d/ctl-nofollow.c" 's/if \(lead >= 0 && lead < DRUM_SIDES && lead != side\) \{/if (0) {/'
+mutate "$d/real.c" "$d/ctl-nofollow.c" 's/if \(fl < 0 \|\| fl >= DRUM_SIDES \|\| fl == side\)/if (1)/'
 # control 15: a follower judged by its own playhead (an empty deck never moves: no lock)
 mutate "$d/real.c" "$d/ctl-ownmoving.c" 's/\n\s*moving = g_drum_lead_still\[side\] < DRUM_SYNC_STALL;//'
 # control 16: the lead's stillness never counted (a master whose blocks stop reads as moving
 # forever: the follower's first hit waits for a boundary that never comes)
 mutate "$d/real.c" "$d/ctl-leadstill.c" 's/\n\s*else if \(g_drum_lead_still\[side\] < DRUM_AGE_MAX\)\n\s*g_drum_lead_still\[side\] \+= ns;//'
 # control 17: a new lead's first reading taken as motion (a paused master waits out the stall)
-mutate "$d/real.c" "$d/ctl-leadnew.c" 's/\n\s*else if \(g_drum_lead_of\[side\] != lead\)\n[^\n]*\/\* a new lead[^\n]*//'
-for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0 ctl-nofollow ctl-ownmoving ctl-leadstill ctl-leadnew; do
+mutate "$d/real.c" "$d/ctl-leadnew.c" 's/\n\s*else if \(g_drum_lead_of\[side\] != watch\)\n[^\n]*\/\* a new lead[^\n]*//'
+# control 18: a paused deck never follows its paused lead (Paused Deck = Master does nothing)
+mutate "$d/real.c" "$d/ctl-nolatch.c" 's/>= DRUM_SYNC_STALL \? pl : -1;/>= DRUM_SYNC_STALL ? -1 : -1;/'
+# control 19: the paused lead re-chosen on every block, not held from the press (starting the
+# deck mid-roll moves the roll onto its own grid)
+mutate "$d/real.c" "$d/ctl-latchlive.c" 's/else if \(!g_drum_latch_gate\[side\]\) \/\* the press \*\//else/'
+# control 20: a deck playing at the press follows its paused lead too
+mutate "$d/real.c" "$d/ctl-latchany.c" 's/fl < 0 && g_drum_src_still\[side\] >= DRUM_SYNC_STALL \? pl : -1;/fl < 0 ? pl : -1;/'
+# control 21: a latched roll keeps its own track's BPM (off the master's tempo between readings)
+mutate "$d/real.c" "$d/ctl-ownbpm.c" 's/drum_period_frames\(side, fl < 0 && g_drum_latch\[side\] >= 0 \? g_drum_latch\[side\] : side\)/drum_period_frames(side, side)/'
+for v in real ctl-tag ctl-depth ctl-cap ctl-resolve ctl-quiesce ctl-stall ctl-nosync ctl-norate ctl-anyrate ctl-hitage ctl-glide ctl-bank0 ctl-nofollow ctl-ownmoving ctl-leadstill ctl-leadnew ctl-nolatch ctl-latchlive ctl-latchany ctl-ownbpm; do
     $CC "${CFLAGS[@]}" -Wno-unused-parameter -I$T -Iguest/azstem -DDRUM_INC="\"$d/$v.c\"" -o "$d/$v" $T/drumroll_test.c -lpthread -lm
 done
 suite "drumroll" "$d/real" "$d/scratch"
@@ -4295,6 +4308,8 @@ control "drum feed: an empty deck never takes the master's BPM" "$OUT/drumfeed/c
 control "drum feed: any unknown BPM takes the master's"     "$OUT/drumfeed/ctl-anyunknown"
 control "drum feed: an unknown or unreadable master trusted" "$OUT/drumfeed/ctl-trust"
 control "drum feed: a loaded deck follows the master's grid"  "$OUT/drumfeed/ctl-leadany"
+control "drum feed: Own Track still follows the master"      "$OUT/drumfeed/ctl-pausedoff"
+control "drum feed: the master told to follow itself"        "$OUT/drumfeed/ctl-pausedself"
 control "bpmstate: the use count never read (a disposed BpmState trusted)" "$OUT/bpmstate/ctl-nouse"
 control "bpmstate: no weak reference taken (the block can be freed)"     "$OUT/bpmstate/ctl-noweak"
 control "bpmstate: the control block's vtable not checked"               "$OUT/bpmstate/ctl-novt"
@@ -4545,6 +4560,10 @@ control "drumroll: an empty deck never follows the master" "$OUT/drum/ctl-nofoll
 control "drumroll: a follower judged by its own playhead"  "$OUT/drum/ctl-ownmoving" "$OUT/drum/scratch"
 control "drumroll: a stopped lead's stillness never counted" "$OUT/drum/ctl-leadstill" "$OUT/drum/scratch"
 control "drumroll: a new lead's first reading taken as motion" "$OUT/drum/ctl-leadnew" "$OUT/drum/scratch"
+control "drumroll: a paused deck never follows the master"  "$OUT/drum/ctl-nolatch" "$OUT/drum/scratch"
+control "drumroll: the paused lead not held from the press" "$OUT/drum/ctl-latchlive" "$OUT/drum/scratch"
+control "drumroll: a playing deck follows its paused lead"  "$OUT/drum/ctl-latchany" "$OUT/drum/scratch"
+control "drumroll: a latched roll at its own track's BPM"   "$OUT/drum/ctl-ownbpm" "$OUT/drum/scratch"
 control "ogg decode: resample failure -> native buffer"  "$OUT/ogg/ctl-fallback"
 control "ogg decode: max_frames ignored"                 "$OUT/ogg/ctl-nocap"
 control "vinyl save: flush does not consume the slot"     "$OUT/vsave/ctl-noclear"

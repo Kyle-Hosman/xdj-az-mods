@@ -32,6 +32,7 @@ the table and `features.def` disagree.
 | `stem-volume-eq` | Stem Volume on CH 3/4 EQ | toggle | stems | 0 = off, 1 = on |
 | `drum-roll` | Drum Roll | toggle | - | 0 = off, 1 = on |
 | `drum-roll-bank` | Bank | choice | drum-roll | 0 = "1", 1 = "2", 2 = "3", 3 = "4" |
+| `drum-roll-paused-deck` | Paused Deck | choice | drum-roll | 0 = "Master", 1 = "Own Track" |
 | `fps60-waveforms` | 60 FPS Waveforms | toggle | fps60 | 0 = off, 1 = on |
 | `fps60-ui` | 60 FPS UI | toggle | fps60 | 0 = off, 1 = on |
 | `playlist-editing` | Playlist Editing | toggle | - | 0 = off, 1 = on |

@@ -67,6 +67,7 @@ static void load_stems_f32(int d);
 void azstem_drum_bpm(int side, float bpm);
 
 void azstem_drum_follow(int side, int lead);
+void azstem_drum_follow_paused(int side, int lead);
 
 void azstem_drum_select(int side, int slot);
 

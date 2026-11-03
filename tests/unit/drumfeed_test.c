@@ -37,5 +37,15 @@ int main(void) {
     CHECK("lead: master unreadable -> itself", drum_feed_lead(0, E, 1, 0, 126.0) == -1);
     CHECK("lead: master ejected too -> itself", drum_feed_lead(0, E, 1, 1, E) == -1);
     CHECK("lead: the master is this empty deck -> itself", drum_feed_lead(2, E, 2, 1, E) == -1);
+    /* drum_feed_paused_lead: the deck a paused deck's roll locks to (azstem_drum_follow_paused) */
+    CHECK("paused: Master: deck 2 follows master deck 1", drum_feed_paused_lead(1, 0, 1, 124.0, 1) == 0);
+    CHECK("paused: Master: deck 4 follows master deck 3", drum_feed_paused_lead(3, 2, 1, 93.5, 1) == 2);
+    CHECK("paused: Own Track: nobody", drum_feed_paused_lead(1, 0, 1, 124.0, 0) == -1);
+    CHECK("paused: the master deck follows nobody", drum_feed_paused_lead(0, 0, 1, 124.0, 1) == -1);
+    CHECK("paused: no known master -> nobody", drum_feed_paused_lead(1, -1, 0, 0.0, 1) == -1);
+    CHECK("paused: master unreadable -> nobody", drum_feed_paused_lead(1, 0, 0, 124.0, 1) == -1);
+    CHECK("paused: master out of range -> nobody", drum_feed_paused_lead(1, 4, 1, 124.0, 1) == -1);
+    CHECK("paused: master ejected -> nobody", drum_feed_paused_lead(1, 0, 1, E, 1) == -1);
+    CHECK("paused: master BPM out of range -> nobody", drum_feed_paused_lead(1, 0, 1, 450.0, 1) == -1);
     return ut_summary();
 }

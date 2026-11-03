@@ -256,6 +256,7 @@ static _Atomic int g_master_deck; /* stems_display.c: master deck 0..3, -1 = non
 static void install_master_hook(void);
 static float drum_feed_bpm(int d, double live, int master, int master_ok, double master_live);
 static int drum_feed_lead(int d, double live, int master, int master_ok, double master_live);
+static int drum_feed_paused_lead(int d, int master, int master_ok, double master_live, int on);
 
 static _Atomic int g_ui60_on;
 
