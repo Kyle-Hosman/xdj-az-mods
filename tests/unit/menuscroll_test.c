@@ -234,11 +234,10 @@ int main(void) {
             mt0 = g_txt[i].s;
         }
     /* the official switches are more than the card holds (Column Edit and Preview Hot Cues live
-     * on Browse View Mods' own screen and the Phase Meter on its own, like the Overlays
-     * readouts), so its last line that fits says "+3 more"; the registered rows below overflow
-     * it further */
-    CHECK("no mod rows: the official rows end the preview card with \"+3 more\"",
-          more0 == 1 && !strcmp(mt0, "+3 more"));
+     * on Browse View Mods' own screen, like the Overlays readouts), so its last line that fits
+     * says "+5 more"; the registered rows below overflow it further */
+    CHECK("no mod rows: the official rows end the preview card with \"+5 more\"",
+          more0 == 1 && !strcmp(mt0, "+5 more"));
 
     /* ---- 20 registered rows: 16 from one mod (one with an icon), 4 from "testmod" (a SCREEN) ---- */
     memset(g_icon, 255, sizeof g_icon);
