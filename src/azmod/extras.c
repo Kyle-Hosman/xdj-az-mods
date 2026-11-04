@@ -1382,7 +1382,8 @@ static int pl_order(void) {
  * the constructors; WaveformView::mouseDown hit-tests the fields the same way). */
 static int pl_lane_of(int d) {
     static const int stock[4] = {1, 2, 0, 3};
-    return d < 0 || d > 3 ? -1 : pl_order() == 1 ? d : stock[d];
+    return d < 0 || d > 3 ? -1 : pl_order() == 1 ? d
+                                                 : stock[d];
 }
 static const int PL_FIELD_OFF[4] = {0x3f0, 0x3f8, 0x418, 0x420}; /* WaveformView: deck d's field */
 static const int PL_NUM_OFF[4] = {0xd0, 0xd8, 0xc8, 0xe0}; /* DeckSetup4DeckFieldWidget: its box */
@@ -2171,7 +2172,8 @@ static void pm4_paint_top(uintptr_t v, void *g, const int rv[4], int rr[4][4]) {
         if (j < 0)
             continue;
         int y = top + j * PM4T_ROW, ism = d == M.lane;
-        int in = jm < 0 || j < jm ? +1 : j > jm ? -1 : 0;
+        int in = jm < 0 || j < jm ? +1 : j > jm ? -1
+                                                : 0;
         unsigned col = ism ? PM_ORANGE : PM_BLUE;
         double oph;
         line = px[d];
