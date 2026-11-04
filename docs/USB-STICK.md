@@ -445,12 +445,13 @@ loaded track. The loader restarts EP147 on its own only in these cases:
 
 | Situation | Restart |
 |---|---|
-| EP147 is already running mods (the env it started with is not empty) | never by the loader. The new set is staged and waits for the user's Reload or the next boot. |
+| EP147 is already running mods (the env it started with is not empty) | never by the loader, except a boot with no mods USB (below). The new set is staged and waits for the user's Reload or the next boot. |
 | EP147 is running stock (a fresh install, or the boot after mods were off) | once, on the boot's first pass while the deck has been up at most 240 seconds (`AZ_BOOT_WINDOW`), unless a track is known to be loaded; later only on proof that every deck is empty, held for 3 seconds (`AZ_DECKS_SETTLE`) |
 | The USB asks for `mods = off` or `uninstall` | allowed, under the same early-boot or every-deck-empty rule (these are the user's requests, and `mods = off` is the way out of a bad set) |
 | A set installed from Mod Menu > Updates | never: staged, and the Updates screen says "Update installed. Reload to apply." |
 | Community Mods' apply | the user's own Reload: the Mod Menu asks for confirmation when a track is loaded (or that cannot be told), and the loader restarts without checking the decks |
-| No USB, no `MODS/`, no usable core | not a request: the running set carries on; the stock env applies at the Reload or the next boot |
+| No mods USB at boot (no USB, or no USB with a mods set) | the deck goes back to stock right away: the early-boot restart above (at most 240 seconds after power-on, never over a loaded track), else on proof that every deck is empty |
+| A mods USB whose set cannot be used (no usable core) | not a request: the running set carries on; the stock env applies at the Reload or the next boot |
 
 While a restart waits, `/run/az-reload-pending` exists (first line `stick`, or `update` for
 a staged update) and the Mod Menu's Reload row says "Reload to apply.". Any EP147 start
@@ -543,8 +544,9 @@ EP147 starts ([Flag files](#flag-files)).
 mods: they run from the cache. What lives on the USB goes with it: stems and drum roll
 samples on that USB, and community mods' `assets_dir` and `data_dir` (they read as
 unavailable). At the next boot EP147 starts with the cached set, the loader finds no mods
-USB, writes an empty `az-preload.env` and does not restart (a missing USB is not a
-request); the Reload row says "Reload to apply.", and the boot after that starts stock. The
+USB, writes an empty `az-preload.env` and restarts EP147 to stock early in the boot (never
+over a loaded track; if one is loaded, the Reload row says "Reload to apply." and the restart
+waits until every deck is empty). The
 cache and the cached `deck/` stay on the deck, and the cached hooks still run (the SSH hook
 turns SSH off when there is no USB).
 

@@ -8,7 +8,8 @@
 # (`test/run.sh mirror`).
 # RESTART POLICY: a deck already running mods is never restarted by the loader; a change
 # is staged and /run/az-reload-pending says "stick" (staged below). Only a deck whose first
-# start was stock (no env), MODS/mods.off, an uninstall or the user's apply restart.
+# start was stock (no env), a boot with no mods stick (back to stock at once), MODS/mods.off,
+# an uninstall or the user's apply restart.
 set -u
 . /stub/devflag
 apk add -q dosfstools >/dev/null 2>&1 || { echo NO_DOSFSTOOLS; exit 1; }
@@ -27,6 +28,8 @@ boot() { rm -f /tmp/systemctl.calls /run/az-reload-pending; devflag; /usr/sbin/a
 restarted() { grep -q "restart EP147" /tmp/systemctl.calls 2>/dev/null; }
 # a change on a deck already running mods: staged for the Reload, no restart
 staged() { ! restarted && [ "$(head -n 1 /run/az-reload-pending 2>/dev/null)" = stick ] && grep -q "EP147 is running mods" /tmp/az-usbload.log; }
+# no mods stick at boot on a deck running mods: back to stock now, nothing left pending
+tostock() { restarted && [ ! -e /run/az-reload-pending ] && grep -q "no mods stick at boot -> stock now" /tmp/az-usbload.log; }
 env_() { cat $ENVF 2>/dev/null; }
 p7sum() { (cd $P7 2>/dev/null && find . -type f ! -name usbload.log | sort | xargs md5sum 2>/dev/null) | md5sum; }   # the loader's own capped log rotates by size
 imgsum() { md5sum /img | cut -d' ' -f1; }
@@ -59,16 +62,16 @@ chk "e2 no restart" '! restarted'; chk "e2 p7 untouched" '[ "$c0" = "$(p7sum)" ]
 echo "== f mods.off removed -> modded again"; st 'rm MODS/mods.off'; boot
 chk "f env core" '[ "$(env_)" = "$CORE" ]'; chk "f restarted" restarted
 
-echo "== g power-cycle with a no-MODS/ stick -> stock env written, the running set carries on (no restart); then nothing"; st 'rm -rf MODS'; i0=$(imgsum); boot
-chk "g env stock" '[ -z "$(env_)" ]'; chk "g staged, no restart" staged; chk "g stick untouched" '[ "$i0" = "$(imgsum)" ]'
+echo "== g power-cycle with a no-MODS/ stick (no mods stick) -> stock env written and restarted to stock now; then nothing"; st 'rm -rf MODS'; i0=$(imgsum); boot
+chk "g env stock" '[ -z "$(env_)" ]'; chk "g back to stock now" tostock; chk "g stick untouched" '[ "$i0" = "$(imgsum)" ]'
 c0=$(p7sum); boot; chk "g2 no restart" '! restarted'; chk "g2 p7 untouched" '[ "$c0" = "$(p7sum)" ]'
 
-echo "== h modded, then NO stick -> stock env written, no restart (a forgotten stick is not a request); then nothing"; st 'mkdir -p MODS; echo c2 > MODS/azmod-core.so; echo s1 > MODS/azstem.so'; boot; chk "h1 modded" '[ "$(env_)" = "$CORE" ]'
-unplug; boot; chk "h2 env stock" '[ -z "$(env_)" ]'; chk "h2 staged, no restart" staged
+echo "== h modded, then NO stick -> stock env written and restarted to stock now (no USB at boot = stock); then nothing"; st 'mkdir -p MODS; echo c2 > MODS/azmod-core.so; echo s1 > MODS/azstem.so'; boot; chk "h1 modded" '[ "$(env_)" = "$CORE" ]'
+unplug; boot; chk "h2 env stock" '[ -z "$(env_)" ]'; chk "h2 back to stock now" tostock
 c0=$(p7sum); boot; chk "h3 no restart" '! restarted'; chk "h3 p7 untouched" '[ "$c0" = "$(p7sum)" ]'; replug
 
-echo "== i modded, then MODS/ with only ssh files -> stock"; boot; st 'rm -f MODS/*.so; echo "ssh-ed25519 AAAAx k" > MODS/authorized_keys'; boot
-chk "i env stock" '[ -z "$(env_)" ]'; chk "i staged, no restart" staged
+echo "== i modded, then MODS/ with only ssh files (not a mods stick) -> stock now"; boot; st 'rm -f MODS/*.so; echo "ssh-ed25519 AAAAx k" > MODS/authorized_keys'; boot
+chk "i env stock" '[ -z "$(env_)" ]'; chk "i back to stock now" tostock
 
 echo "== i2 AppleDouble sidecars are not mods"; st 'mkdir -p MODS; echo c > MODS/azmod-core.so; printf "\0\5\26\7" > MODS/._azmod-core.so; printf x > MODS/._azmod.so'; boot
 chk "i2 env = core only, sidecars not cached" '[ "$(env_)" = "LD_PRELOAD=$P7/azmod-core.so" ] && ! ls -a $P7 | grep -q "^\._"'

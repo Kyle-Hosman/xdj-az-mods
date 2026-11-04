@@ -63,7 +63,8 @@ python3 deck/stage_stick.py <out_dir> [--version <v>] [--manifest <json>] [--no-
    | On the USB | Effect |
    |---|---|
    | `mods = off` in `MODS/azmods.cfg`, or `MODS/uninstall` | the deck goes back to stock, with a restart under the restart policy |
-   | no USB, or no usable `MODS/` | stock is staged; it applies at the user's Reload or the next boot |
+   | no mods USB at boot | the deck goes back to stock right away, with the early-boot restart (never over a loaded track) |
+   | a mods USB with no usable set | stock is staged; it applies at the user's Reload or the next boot |
    | `deck = off` in `MODS/azmods.cfg` | the USB's loader and the hooks are skipped; the mods still load |
    | `MODS/community-mods/` (without each mod's `data/`) | mirrored into the same cache |
    | `community-mods = off` in `MODS/azmods.cfg` | no community mod loads |

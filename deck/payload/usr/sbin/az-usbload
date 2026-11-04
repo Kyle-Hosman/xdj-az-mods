@@ -21,6 +21,8 @@
 #   - Different -> write $ENVF for the next boot; apply now with one gated restart
 #     (section 4) only where the RESTART POLICY below allows it: early in boot, never on a
 #     deck already running mods, never over a loaded track.
+#   - No mods stick at boot -> stock right away (the early-boot restart, never over a
+#     loaded track), not only at the next Reload or boot.
 #   - Pulling the stick mid-set changes nothing until the next boot.
 # What may run from a stick is decided by the signed pins (TRUST, below).
 #
@@ -56,6 +58,7 @@ ep_pid() { pidof EP147 2>/dev/null | awk '{print $1}'; }
 # drops every loaded track: mid-set it is the worst thing a mod can do.
 #   - A deck already running mods is never restarted by the loader: a changed set is
 #     staged and the Mod Menu says "Reload to apply." (the DJ's Reload or the next boot).
+#     One exception: a boot with no mods stick at all goes stock early in boot, as below.
 #   - A deck not running mods (a fresh install: stock EP147 has no Mod Menu) may be
 #     restarted once by the boot's first pass, early in boot (uptime <= AZ_BOOT_WINDOW s),
 #     unless a track is known to be loaded.
@@ -1219,10 +1222,17 @@ fi
 # (HAVE empty: a fresh install, or the boot after mods were off) is restarted, once and
 # early in boot, below: stock EP147 has no Mod Menu to offer a Reload. MODS/mods.off, an
 # uninstall and the DJ's own community apply (AZ_FORCE_RELOAD) are the DJ's requests
-# and keep the restart (mods.off is also the escape hatch). A missing stick, no MODS/ or no
-# usable core is not a request: the running set carries on and the stock env applies at the
-# Reload or the next boot. The crash-loop guard's restarts are above and unaffected.
-if [ -n "$HAVE" ] && [ -z "${AZ_FORCE_RELOAD:-}" ] && [ ! -e "${MODS:-/nonexistent}/uninstall" ] && [ "$MODS_OFF" != 1 ]; then
+# and keep the restart (mods.off is also the escape hatch). No mods stick at all on the
+# boot's own pass is stock too: the deck comes up stock right away, through the same early-boot
+# restart a fresh install gets (the gate below, then may_restart boot: early in boot, never over
+# a loaded track). A mods stick whose set is unusable (no core, nothing pinned) is not a request:
+# the running set carries on and the stock env applies at the Reload or the next boot. The
+# crash-loop guard's restarts are above and unaffected.
+NOSTICK=0
+[ -z "$MNT" ] && [ -z "${AZ_RERUN:-}" ] && NOSTICK=1
+if [ "$NOSTICK" = 1 ] && [ -n "$HAVE" ] && [ -z "$WANT" ]; then
+    log "restart policy: no mods stick at boot -> stock now, not at the next Reload (still early in boot only, never over a loaded track)"
+elif [ -n "$HAVE" ] && [ -z "${AZ_FORCE_RELOAD:-}" ] && [ ! -e "${MODS:-/nonexistent}/uninstall" ] && [ "$MODS_OFF" != 1 ]; then
     pending_set stick "the stick's mods differ from the running set"
     log "restart policy: EP147 is running mods [$HAVE]; the stick's set [${WANT:-stock}] is staged -> NOT restarting (the Mod Menu's Reload row says Reload to apply; the next boot loads it)"
     finish

@@ -128,6 +128,7 @@ chk "list entries that are not repos (space, http://) never reach the catalog" '
 chk "a | inside a value is stripped, a long UTF-8 name capped at 47 bytes, still valid UTF-8" 'n=$(mf other-mod 4); [ ${#n} -le 47 ] && ! printf "%s" "$n" | grep -q "|" && printf "%s" "$n" | python3 -c "import sys; sys.stdin.buffer.read().decode(\"utf-8\")"'
 chk "an unknown category is dropped, a known one kept" '[ -z "$(mf other-mod 8)" ] && [ "$(mf good-mod 8 $R1)" = visual ]'
 # the fixture's well-formed date, read from the served index so the test names no date itself
+# shellcheck disable=SC2034  # UPD is read inside chk's single-quoted eval string
 UPD=$(sed -n 's/.*"updated": "\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)".*/\1/p' /srv/r1/azmods-repo.json | head -1)
 chk "the index's updated date is field 20; CONTROL: a malformed one (one-digit month and day) is empty" '[ -n "$UPD" ] && [ "$(mf good-mod 20 $R1)" = "$UPD" ] && [ -z "$(mf dd-mod 20)" ] && [ "$(mf any-mod 20)" = "$UPD" ]'
 chk "the download count is field 21 (good-mod 1840, any-mod 0); CONTROL: a mod stats.json has no count for is empty" '[ "$(mf good-mod 21 $R1)" = 1840 ] && [ "$(mf any-mod 21)" = 0 ] && [ -z "$(mf case-mod 21)" ]'
@@ -420,7 +421,7 @@ FZBAD=0; FZKEPT=0
 for seed in $(seq 0 47); do
     python3 /t/community_statsfuzz.py /srv/stats.good /srv/stats.json "$seed"
     run refresh
-    if ! { [ "$(st state)" = done ] && fields_ok && counts_ok && [ -z "$(mf other-mod 21)" ] && stick_ro && nothing_half; }; then
+    if ! { [ "$(st state)" = "done" ] && fields_ok && counts_ok && [ -z "$(mf other-mod 21)" ] && stick_ro && nothing_half; }; then
         FZBAD=$((FZBAD + 1)); echo "  seed $seed: state=$(st state) msg=$(st msg | cut -c1-60)"
     fi
     # the last good counts survive a file that is refused as a whole

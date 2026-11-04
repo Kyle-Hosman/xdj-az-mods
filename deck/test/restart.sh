@@ -11,8 +11,9 @@
 #
 # Every "does not restart" case has a twin in the same run that differs in one input and
 # does restart, so the instrument (the systemctl stub's call log) is shown able to see a
-# restart: r1 for r2/r7, r3c for r3/r4/r5/r6, r10c for r10, r13c for r13/r14; rc2 removes
-# the running-mods rule and r13's input then restarts.
+# restart: r1 for r2/r7, r3c for r3/r4/r5/r6, r10c for r10, r13c for r13/r14, r16 for r13 and
+# r16c (no stick vs a stick, the boot's pass vs a re-run); rc2 removes the running-mods rule
+# and r13's input then restarts; rc3 removes the no-stick rule and r16's input then holds.
 set -u
 . /stub/devflag
 apk add -q dosfstools >/dev/null 2>&1 || { echo NO_DOSFSTOOLS; exit 1; }
@@ -171,15 +172,53 @@ mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > 
 AZ_RERUN=1 AZ_FORCE_RELOAD=1 AZ_BOOT_WINDOW=0 boot
 chk "r15 restarted" 'restarted && lg "a community apply"'
 
+echo "== r16 a deck running mods boots with NO mods stick, every deck empty -> back to stock now"
+# r13's state (an older set running), only the stick is gone: no USB at boot means stock.
+reset; ep147; echo EEEE > /tmp/mark.state; marker_loop
+mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > $P7/az-preload.env
+umount /media/usb/sda1; mv /dev/sda1 /dev.sda1.off
+AZ_BOOT_WINDOW=1000000000 boot
+chk "r16 restarted" restarted
+chk "r16 logged: no mods stick at boot" 'lg "restart policy: no mods stick at boot -> stock now"'
+chk "r16 the env is stock" '[ -z "$(cat $P7/az-preload.env)" ]'
+chk "r16 nothing left pending" '[ ! -e /run/az-reload-pending ]'
+echo "== r16b the same with a track loaded -> NO restart while it is loaded; once every deck is empty -> stock"
+reset; ep147; echo LEEE > /tmp/mark.state; marker_loop
+mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > $P7/az-preload.env
+# the decks empty only once the loader has held back (the no-stick pick alone waits ~10 s)
+( i=0; until grep -q "NOT now" /tmp/az-usbload.log 2>/dev/null || [ $i -ge 600 ]; do sleep 0.2; i=$((i + 1)); done; sleep 1; echo EEEE > /tmp/mark.state ) &
+AZ_BOOT_WINDOW=1000000000 AZ_DEFER_MAX=30 boot
+chk "r16b held back while loaded" 'lg "restart wanted but NOT now: a track is loaded"'
+chk "r16b then restarted once every deck was empty" 'restarted && lg "deferred restart: every deck is empty -> applying"'
+chk "r16b the restart came AFTER the decks emptied" '[ "$(grep -n "NOT now" /tmp/az-usbload.log | cut -d: -f1)" -lt "$(grep -n "daemon-reload + restart" /tmp/az-usbload.log | cut -d: -f1)" ]'
+echo "== r16c a mods update re-run with no stick on a deck running mods -> staged, NO restart (only the boot's own pass)"
+reset; ep147; echo EEEE > /tmp/mark.state; marker_loop
+mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > $P7/az-preload.env
+AZ_RERUN=1 AZ_BOOT_WINDOW=1000000000 boot
+chk "r16c not restarted" '! restarted && ! lg "no mods stick at boot"'
+mv /dev.sda1.off /dev/sda1; mount -o ro /dev/sda1 /media/usb/sda1
+
 echo "== rc2 CONTROL: the loader with the running-mods rule cut out restarts r13's input"
 cp /usr/sbin/az-usbload /tmp/az-usbload.rule
-sed -e 's/^if \[ -n "\$HAVE" \] && /if false \&\& /' /tmp/az-usbload.rule > /tmp/az-usbload.norule
+sed -e 's/^elif \[ -n "\$HAVE" \] && /elif false \&\& /' /tmp/az-usbload.rule > /tmp/az-usbload.norule
 chk "rc2 the mutation changed exactly the rule line" '[ "$(diff /tmp/az-usbload.rule /tmp/az-usbload.norule | grep -c "^+[^+]")" = 1 ] && sh -n /tmp/az-usbload.norule'
 cp /tmp/az-usbload.norule /usr/sbin/az-usbload; chmod +x /usr/sbin/az-usbload
 reset; ep147; echo EEEE > /tmp/mark.state; marker_loop
 mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > $P7/az-preload.env
 AZ_BOOT_WINDOW=1000000000 boot
 chk "rc2 r13's input: restarts a deck already running mods" restarted
+cp /tmp/az-usbload.rule /usr/sbin/az-usbload; chmod +x /usr/sbin/az-usbload
+
+echo "== rc3 CONTROL: the loader with the no-stick rule cut out holds r16's input (staged, no restart)"
+sed -e 's/^\[ -z "\$MNT" \] && \[ -z "\${AZ_RERUN:-}" \] && NOSTICK=1$/: no-stick rule cut/' /tmp/az-usbload.rule > /tmp/az-usbload.nostick
+chk "rc3 the mutation changed exactly the rule line" '[ "$(diff /tmp/az-usbload.rule /tmp/az-usbload.nostick | grep -c "^+[^+]")" = 1 ] && sh -n /tmp/az-usbload.nostick'
+cp /tmp/az-usbload.nostick /usr/sbin/az-usbload; chmod +x /usr/sbin/az-usbload
+reset; ep147; echo EEEE > /tmp/mark.state; marker_loop
+mkdir -p $P7; echo old > $P7/azmod-old.so; echo "LD_PRELOAD=$P7/azmod-old.so" > $P7/az-preload.env
+umount /media/usb/sda1; mv /dev/sda1 /dev.sda1.off
+AZ_BOOT_WINDOW=1000000000 boot
+chk "rc3 r16's input: not restarted (the old hold)" '! restarted && lg "EP147 is running mods"'
+mv /dev.sda1.off /dev/sda1; mount -o ro /dev/sda1 /media/usb/sda1
 cp /tmp/az-usbload.rule /usr/sbin/az-usbload; chmod +x /usr/sbin/az-usbload
 
 echo "== rc CONTROL: the same inputs against the loader with the policy cut out DO restart, so r2/r3/r10 can fail"
