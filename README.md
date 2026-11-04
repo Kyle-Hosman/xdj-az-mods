@@ -213,8 +213,9 @@ Smaller tweaks, each with its own switch in the Mod Menu (most of them under
 
 | Mod | What it does |
 |:--|:--|
-| **Phase Meter** | Shows how the decks line up, beat by beat, above their waveforms. In 4 DECK each deck gets a meter like the CDJ-3000's: the master's beats over the deck's own, with both memory cue countdowns, or all four together at the top (4 DECK Placement) |
-| **Compact Track Info** | In 4 DECK, the decks' info in one row at the bottom (as in BROWSE), and taller waveforms in the space it frees, with or without the Phase Meter |
+| **Phase Meter** | Shows how the decks line up, beat by beat, above their waveforms. In 4 DECK all four decks' meters sit together at the top, like the CDJ-3000's: each deck's beats against the master's, with its memory cue countdown |
+| **Compact Track Info** | In 4 DECK, the decks' info in one row at the bottom (as in BROWSE), and taller waveforms in the space it frees, with or without the Phase Meter. Tap a deck's key for key shift |
+| **4 DECK Order 1 2 3 4** | In 4 DECK, the waveforms in deck order 1, 2, 3, 4 from the top instead of 3, 1, 2, 4 |
 | **Hide Track Title** | Tap a deck's track title to hide it or show it again |
 | **BEAT JUMP 2 First** | BEAT JUMP opens the 8, 16, 32 and 64 beat jumps first |
 | **Fine Vinyl Speed Adjust** | The SHORTCUT vinyl speed steps become a 1% slider |

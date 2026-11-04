@@ -56,7 +56,6 @@ the table and `features.def` disagree.
 | `hide-track-title` | Hide Track Title | toggle | extras | 0 = off, 1 = on |
 | `deck-key-title` | Key in Track Title | toggle | extras | 0 = off, 1 = on |
 | `phase-meter` | Phase Meter | toggle | extras | 0 = off, 1 = on |
-| `phase-meter-4deck` | 4 DECK Placement | choice | phase-meter | 0 = "Each Lane", 1 = "Top" |
 | `compact-track-info` | Compact Track Info | toggle | extras | 0 = off, 1 = on |
 | `deck-order-4deck` | 4 DECK Order 1 2 3 4 | toggle | extras | 0 = off, 1 = on |
 | `extended-lead-in` | Extended Lead-In | toggle | extras | 0 = off, 1 = on |

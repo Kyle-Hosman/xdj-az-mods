@@ -34,13 +34,11 @@ typedef enum {
     AZ_CLOCK,      /* the Clock: its switch, time format and time zone (screen_overlays.c) */
     AZ_CLOCK_SET,  /* Set Time Manually: the date and time picker, opened from the Clock (screen_overlays.c) */
     AZ_BROWSE_VIEW, /* Browse View Mods: one row per Browse track list change (screen_overlays.c) */
-    AZ_PHASE_METER, /* the Phase Meter: its switch and its 4 DECK placement (screen_overlays.c) */
 } azmod_mode;
 #define AZMOD_HAVE_CLOCK_TZ_LIST 1 /* AZ_CLOCK_TZ exists (the menu dump names it) */
 #define AZMOD_HAVE_CLOCK_SCREEN 1  /* AZ_CLOCK exists (likewise) */
 #define AZMOD_HAVE_CLOCK_SET 1     /* AZ_CLOCK_SET exists (likewise) */
 #define AZMOD_HAVE_BROWSE_VIEW_SCREEN 1 /* AZ_BROWSE_VIEW exists (likewise) */
-#define AZMOD_HAVE_PHASE_METER_SCREEN 1 /* AZ_PHASE_METER exists (likewise) */
 #define AZMOD_HAVE_MENU_GLIDE 1 /* the lists glide on g_glide_ms (the menu dump steps that clock) */
 
 /* Deck count (bus/LED geometry). */

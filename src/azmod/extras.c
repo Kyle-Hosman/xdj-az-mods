@@ -1290,17 +1290,15 @@ static void pl_rows(uintptr_t p, int on) {
         ((void (*)(uintptr_t, int)) JUCE_SETVISIBLE)(c, 0);
     }
 }
-/* 4 DECK: the Phase Meter's two placements (its "4 DECK Placement" row) and Compact Track Info.
+/* 4 DECK: the Phase Meter's band and Compact Track Info.
  * The 4-deck entries of the same table (+0x194 field height, +0x1a0..+0x1ac the four rows' y)
  * hold the lanes; EP147 sizes each lane's field from them every frame. A stock lane is 114 px:
  * its waveform box (92 px) at the top, 22 px empty below it, 8 px to the next lane.
- * Each Lane: every lane gets its own meter strip, PM4_STRIP px above its waveform: each row moves
- * down by the 22 px and the field shrinks by them; the left DECK panels stay.
- * Top: the four decks' rulers together in a band above all lanes, where 2 DECK has its meter.
- * The first lane moves down PM4T_DOWN px and the lanes sit PM4T_PITCH apart.
+ * The meter: the four decks' rulers together in a band above all lanes, where 2 DECK has its
+ * meter. The first lane moves down PM4T_DOWN px and the lanes sit PM4T_PITCH apart.
  * Compact Track Info: BROWSE's one-row deck strip (ci_tick) replaces the two-row track info at
  * the bottom, and the lanes share the space down to it, CI_PITCH px each (CI_TOP_PITCH with the
- * Top band): taller fields, and taller waveforms (pl_lane: each lane box's render height).
+ * meter's band): taller fields, and taller waveforms (pl_lane: each lane box's render height).
  * Wherever the lanes move, each left DECK panel (gui::waveform::DeckInfo4DeckWidget: the source,
  * KEY and BEAT JUMP rows in 114 px) and the deck number box beside it (DeckSetup4DeckWidget)
  * move with their lane and take its height, each of their children moved and sized in
@@ -1308,13 +1306,12 @@ static void pl_rows(uintptr_t p, int on) {
  * With a meter, EP147's own countdown in the field (gui::detailed_waveform::CueCountdownWidget,
  * shown for the selected deck of each side) moves out of sight while the meter shows each
  * deck's own. Everything moved keeps its stock bounds, which come back with the stock table. */
-#define PM4_STRIP 30    /* Each Lane: the meter strip above each lane's waveform */
-#define PM4_SHIFT 22    /* how much each field shrinks (Each Lane: how far each lane moves down) */
-#define PM4T_DOWN 70    /* Top: how far the first lane moves down */
-#define PM4T_PITCH 104  /* Top: lane to lane (stock 122) */
-#define PM4T_PANEL 98   /* Top: a left panel's and a number box's height (stock 114) */
+#define PM4_SHIFT 22    /* how much each field shrinks under the meter */
+#define PM4T_DOWN 70    /* the meter: how far the first lane moves down */
+#define PM4T_PITCH 104  /* the meter: lane to lane (stock 122) */
+#define PM4T_PANEL 98   /* the meter: a left panel's and a number box's height (stock 114) */
 #define CI_PITCH 154    /* Compact Track Info: lane to lane, down to the strip */
-#define CI_TOP_PITCH 136 /* Compact Track Info with the Top band */
+#define CI_TOP_PITCH 136 /* Compact Track Info with the meter's band */
 #define CI_GAP 6        /* between a lane and the next one's panel */
 #define CI_RENDER_LESS 16 /* a lane box renders its waveform this much shorter than itself */
 #define PM4_CDW_VT EP_2b62268    /* gui::detailed_waveform::CueCountdownWidget (its Component) */
@@ -1322,13 +1319,10 @@ static void pl_rows(uintptr_t p, int on) {
 #define PM4_PANEL_VT EP_2cfe5c0  /*   a left DECK panel: DeckInfo4DeckWidget */
 #define PM4_NUMS_VT EP_2d0dc08   /* [view+0x428] child: DeckSetup4DeckFieldWidget */
 #define PM4_NUM_VT EP_2d0ddc0    /*   a deck number box: DeckSetup4DeckWidget */
-static int g_pl_active4;   /* the meter's 4-deck layout live in the view: 0 none, 1 Each Lane, 2 Top */
+static int g_pl_active4;   /* the meter's 4-deck layout live in the view: 0 none, 1 the band */
 static int g_pl_stock4[5]; /* the stock 4-deck height and rows, captured before the first write */
 static int g_pm4_row[4];   /* the four lanes' y, top to bottom, as laid out now */
 static int g_pm4_pitch;    /* and lane to lane */
-static int pm4_top(void) {
-    return az_get(AZF_PHASE_METER_4DECK) == 1;
-}
 static int ci_on(void) {
     return az_on(AZF_COMPACT_INFO) && az_active(AZF_COMPACT_INFO);
 }
@@ -1346,11 +1340,7 @@ static void pl_layout4(int meter, int compact, struct pl4 *L) {
     for (int i = 0; i < 4; i++)
         L->row[i] = s[1 + i];
     if (!compact) {
-        if (meter == 1) {
-            L->f = s[0] - PM4_SHIFT;
-            for (int i = 0; i < 4; i++)
-                L->row[i] = s[1 + i] + PM4_SHIFT;
-        } else if (meter == 2) {
+        if (meter) {
             L->f = s[0] - PM4_SHIFT;
             L->pitch = PM4T_PITCH;
             L->ph = PM4T_PANEL;
@@ -1361,14 +1351,13 @@ static void pl_layout4(int meter, int compact, struct pl4 *L) {
         }
         return;
     }
-    int pitch = meter == 2 ? CI_TOP_PITCH : CI_PITCH, down = meter == 2 ? PM4T_DOWN : 0,
-        strip = meter == 1 ? PM4_STRIP : 0;
+    int pitch = meter ? CI_TOP_PITCH : CI_PITCH, down = meter ? PM4T_DOWN : 0;
     L->pitch = pitch;
-    L->f = pitch - CI_GAP - (meter == 2 ? 0 : 2) - strip;
-    L->ph = pitch - CI_GAP - (meter == 2 ? 0 : 2);
+    L->f = pitch - CI_GAP - (meter ? 0 : 2);
+    L->ph = L->f;
     L->render = L->f - CI_RENDER_LESS;
     for (int i = 0; i < 4; i++) {
-        L->row[i] = s[1] + down + strip + i * pitch;
+        L->row[i] = s[1] + down + i * pitch;
         L->py[i] = down + i * pitch;
     }
 }
@@ -1816,32 +1805,6 @@ static void ci_ks_toggle(uintptr_t v, int d, const int r[4], int cell_top) {
     g_ci_ks.par = par;
     kt_set_visible(c, 1);
 }
-/* Where an open key shift panel is (screen rects), for the Phase Meter's Each Lane strips: the
- * meter paints over the view's children, so a strip under an open panel is left out. Every
- * deck's panel, in its DeckInfo widget or floated by the strip. Message thread (pl_tick4 writes,
- * the view's paintOverChildren reads). */
-static int g_pm4_cover[4][4], g_pm4_ncover;
-static void pl_ks_covers(uintptr_t v) {
-    g_pm4_ncover = 0;
-    uintptr_t pc = *(volatile uintptr_t *) (v + 0x428), kw = 0;
-    if (!ht_ptr_ok(pc) || *(volatile uintptr_t *) pc != PL_PANELS_VT)
-        return;
-    uintptr_t panels = pl_kid(pc, PM4_PANELS_VT, 0);
-    for (int d = 0; panels && d < 4; d++) {
-        uintptr_t par = kt_obj(*(volatile uintptr_t *) (panels + CI_PANEL0 + 8 * d), KT_DI4_VT);
-        uintptr_t c = par ? kt_panel_of(par, &kw) : 0;
-        if (c && kt_visible(c) && ht_screen_rect(c, g_pm4_cover[g_pm4_ncover]))
-            g_pm4_ncover++;
-    }
-}
-static int pm4_covered(int x, int y, int w, int h) {
-    for (int i = 0; i < g_pm4_ncover; i++) {
-        const int *r = g_pm4_cover[i];
-        if (x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + h)
-            return 1;
-    }
-    return 0;
-}
 /* Every tick from pl_tick4: the floated panel home when it should go, then a tap on a key */
 static void ci_key_tap(uintptr_t v, int compact) {
     ci_ks_home(compact);
@@ -1875,7 +1838,7 @@ static void ci_key_tap(uintptr_t v, int compact) {
 }
 static void pl_tick4(uintptr_t v, int mode) {
     int on4 = mode == 2 && ht_ptr_ok(*(volatile uintptr_t *) (v + 0x18)); /* 4 DECK, on screen */
-    int meter = on4 && pm_on() ? (pm4_top() ? 2 : 1) : 0;
+    int meter = on4 && pm_on(); /* the band above the lanes */
     int have = ci_on() && ci_strip(v); /* looked for while BROWSE shows, too */
     int compact = on4 && have;
     volatile int *t = (volatile int *) (v + 0x190);
@@ -1883,7 +1846,7 @@ static void pl_tick4(uintptr_t v, int mode) {
     /* ours = the table one of our layouts writes from the stock we kept; else it is stock */
     int ours = 0;
     struct pl4 L;
-    for (int m = 0; m < 3 && g_pl_stock4[0] && !ours; m++)
+    for (int m = 0; m < 2 && g_pl_stock4[0] && !ours; m++)
         for (int c = 0; c < 2 && !ours; c++) {
             if (!m && !c)
                 continue;
@@ -1898,16 +1861,16 @@ static void pl_tick4(uintptr_t v, int mode) {
         ci_place(v, 0);
         return; /* never seen a stock table this could come from: touch nothing */
     }
-    /* any layout but Each Lane alone only on a stock table like EP147's: rows in order at
-     * least CI_PITCH apart less the stock gap, the last lane ending no lower than it did */
+    /* a layout only on a stock table like EP147's: rows in order at least PM4T_PITCH apart,
+     * the last lane ending no lower than it did */
     int fits = 1;
     for (int i = 1; i < 4; i++)
         fits = fits && g_pl_stock4[1 + i] - g_pl_stock4[i] >= PM4T_PITCH;
-    if (!fits && (meter == 2 || compact))
-        meter = meter == 2 ? 0 : meter, compact = 0;
+    if (!fits)
+        meter = 0, compact = 0;
     pl_layout4(meter, compact, &L);
     if (!compact && L.row[3] + L.f > g_pl_stock4[4] + g_pl_stock4[0])
-        pl_layout4(meter = 0, 0, &L); /* Top would end below the stock lanes */
+        pl_layout4(meter = 0, 0, &L); /* the band would end below the stock lanes */
     int wv[5] = {L.f, L.row[0], L.row[1], L.row[2], L.row[3]};
     if (memcmp(cur, wv, sizeof cur)) {
         t[1] = wv[0];
@@ -1920,7 +1883,6 @@ static void pl_tick4(uintptr_t v, int mode) {
     g_pm4_pitch = L.pitch;
     ci_place(v, compact);
     ci_key_tap(v, compact);
-    pl_ks_covers(v);
     /* EP147 reads the 4-deck entries only when it enters 4 DECK (its relayout lays out the
      * 2-deck rows), so in 4 DECK each deck's field is set to its lane's row here (4 DECK
      * Order: pl_lane_of). */
@@ -2023,14 +1985,13 @@ static void pl_tick(void) {
     g_pl_active = want;
 }
 /* ---- Phase Meter in 4 DECK -------------------------------------------------------------
- * Each lane gets the CDJ-3000's phase meter in the strip above its waveform (pl_tick4): the
- * master's ruler on top in orange, the lane's own deck below in blue, ten beats across with
- * white beat ticks pointing inward and red downbeats, and a white line at EP147's playhead. On
- * the left, as on the CDJ: the master's number in an orange box (when another deck is master),
- * the master's memory cue countdown in orange and the lane's own below it in blue, each red
- * under four bars to its cue. "--.-" when there is none or it is not known. The master's lane shows
- * an empty master ruler. A lane that shows a PRO DJ LINK player (Link Waveforms) has that
- * player's phase and countdown; an external master not shown in a lane, its beat packets.
+ * The four decks' meters together in a band above the lanes (pl_tick4 makes the room,
+ * pm4_paint_top draws it): one row per lane in the lanes' order, each like the CDJ-3000's ruler,
+ * ten beats across with red downbeats and white beat ticks, and a white line at EP147's playhead
+ * through the band. On the left of each row the deck's number (an orange box for the master) and
+ * its memory cue countdown, red under four bars to its cue, "--.-" when there is none or it is
+ * not known. A lane that shows a PRO DJ LINK player (Link Waveforms) has that player's phase and
+ * countdown; an external master not shown in a lane, its beat packets.
  *
  * Countdowns of the AZ's own decks: EP147's own gui::CueCountdown of each deck model (+0x160,
  * beats to the next memory cue, 0x80000000 none), read after EP147's per-deck model update
@@ -2143,52 +2104,6 @@ static int pm4_playhead(int d, const int rv[4], int r[4]) {
         return -1;
     return r[0] - rv[0] + *(volatile int *) (ph + 0x20) + *(volatile int *) (ph + 0x28) / 2;
 }
-/* Each Lane: the strips; rv = the view's screen rect, rr[d] each deck's waveform box. */
-static void pm4_paint(void *g, const int rv[4], int rr[4][4]) {
-    struct pm4_master M;
-    pm4_master(&M);
-    ((void (*)(void *)) JUCE_G_SAVESTATE)(g);
-    for (int d = 0; d < 4; d++) {
-        int px = pm4_playhead(d, rv, rr[d]);
-        int y0 = rr[d][1] - PM4_STRIP - rv[1], x0 = PM4_X0 - rv[0], w = PM4_X1 - PM4_X0;
-        if (px < 0 || y0 < 0 || px < x0 + 4 || px > x0 + w - 4 || g_pm_nband >= 4 ||
-            pm4_covered(PM4_X_TEXT, rr[d][1] - PM4_STRIP, PM4_X1 - PM4_X_TEXT, PM4_STRIP))
-            continue;
-        int self_m = d == M.lane;
-        double oph;
-        int ok = pm_local_phase(d, &oph);
-        if (!self_m && M.known)
-            pm_ruler_at(g, M.ph, x0, w, y0 + 7, px, PM_ORANGE, 14, 7, +1, 2);
-        else
-            pm_fill(g, x0, y0 + 7, w, 2, PM_ORANGE);
-        if (ok)
-            pm_ruler_at(g, oph, x0, w, y0 + 23, px, PM_BLUE, 14, 7, -1, 2);
-        else
-            pm_fill(g, x0, y0 + 23, w, 2, PM_BLUE);
-        pm_fill(g, px - 1, y0 + 1, 2, PM4_STRIP - 2, 0xFFFFFF);
-        if (g_pm4_ok) { /* both countdowns the same size, right-aligned on one edge */
-            int tx = PM4_X_TEXT - rv[0];
-            uint32_t own = pm4_cue(d);
-            if (!self_m && M.num >= 1 && M.num <= 9) {
-                pm_fill(g, tx, y0 + 1, 13, 13, PM_ORANGE);
-                pm_text(g, 1, &g_pm_digit[M.num], tx, y0 + 1, 13, 13, 0x24, 0x000000);
-            }
-            uint32_t mshow = self_m ? PM_CUE_NONE : M.cd;
-            unsigned mc = mshow <= PM_CUE_NEAR ? PM_RED : PM_ORANGE;
-            pm_text(g, 0, pm_cd_text(mshow), tx + 15, y0, 35, 14, 0x22, mc);
-            pm_text(g, 1, &g_pm_bars, tx + 53, y0 + 2, 32, 12, 0x21, mc);
-            unsigned oc = own <= PM_CUE_NEAR ? PM_RED : PM_BLUE;
-            pm_text(g, 0, pm_cd_text(own), tx + 15, y0 + 15, 35, 14, 0x22, oc);
-            pm_text(g, 1, &g_pm_bars, tx + 53, y0 + 17, 32, 12, 0x21, oc);
-        }
-        int *b = g_pm_band[g_pm_nband++];
-        b[0] = PM4_X_TEXT - rv[0];
-        b[1] = y0;
-        b[2] = PM4_X1 - PM4_X_TEXT;
-        b[3] = PM4_STRIP;
-    }
-    ((void (*)(void *)) JUCE_G_RESTORESTATE)(g);
-}
 /* Top: one row per lane in the band above all lanes, in the lanes' order: the deck's number
  * (an orange box for the master), its memory cue countdown (red under four bars, orange for
  * the master, else blue) and its ruler, the master's in orange; ten beats across, red
@@ -2253,15 +2168,12 @@ static void pm_paint(long self, long g) {
                 dk[n] = d;
             n++;
         }
-    if (n >= 1 && g_pl_active4) { /* 4 DECK: each lane whose deck is known, strip or row */
+    if (n >= 1 && g_pl_active4) { /* 4 DECK: a row for each lane whose deck is known */
         if (!ht_screen_rect((uintptr_t) self, rv))
             return;
         g_pm_view_vt = *(volatile uintptr_t *) self;
         wref_set(&g_pm_view, (uintptr_t) self);
-        if (g_pl_active4 == 2)
-            pm4_paint_top((void *) g, rv, rr);
-        else
-            pm4_paint((void *) g, rv, rr);
+        pm4_paint_top((void *) g, rv, rr);
         return;
     }
     if (n != 2)

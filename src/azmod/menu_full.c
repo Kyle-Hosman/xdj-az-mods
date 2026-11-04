@@ -613,7 +613,7 @@ static void c_activate(azmod_state *s, int it) { /* a right-pane row by knob pre
         s->menu_sel = 0;
         return;
     }
-    if (sub_screen(it)) { /* Extras > Overlays, Clock, Browse View Mods or Phase Meter: its screen */
+    if (sub_screen(it)) { /* Extras > Overlays, Clock or Browse View Mods: its screen, likewise */
         s->mode = sub_screen(it);
         s->pane = 1;
         s->menu_sel = 0;
