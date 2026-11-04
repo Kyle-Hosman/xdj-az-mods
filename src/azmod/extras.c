@@ -1224,13 +1224,23 @@ static void pl_restore(uintptr_t c) {
     pl_bounds(c, b[0], b[1], b[2], b[3]);
     g_pl_moved[i].c = 0;
 }
-/* move c to (dx, dy, dw, dh) from its stock bounds, or back to them (on = 0) */
+/* move c by (dy, dh) from its stock y and height, or back to them (on = 0). Its x and width
+ * stay EP147's own: collapsing the left panels narrows their field and moves the number boxes
+ * (x and width), and a layout that wrote those back would undo the collapse. Only a sideways
+ * move (dx != 0, out of sight) owns x, and puts it back with the rest. */
 static void pl_move(uintptr_t c, int on, int dx, int dy, int dh) {
-    int i, *b = on ? pl_stock(c, 1, &i) : 0;
-    if (!on)
-        pl_restore(c);
-    else if (b)
-        pl_bounds(c, b[0] + dx, b[1] + dy, b[2], b[3] + dh);
+    int i, *b = pl_stock(c, on, &i);
+    if (!b)
+        return;
+    int x = *(volatile int *) (c + 0x20), w = *(volatile int *) (c + 0x28);
+    if (dx)
+        x = on ? b[0] + dx : b[0];
+    if (on) {
+        pl_bounds(c, x, b[1] + dy, w, b[3] + dh);
+        return;
+    }
+    pl_bounds(c, x, b[1], w, b[3]);
+    g_pl_moved[i].c = 0;
 }
 /* The shorter phase panels (178 px, stock 200) cut the 4th row (loop / Q, panel y 159..200)
  * in half, so any visible child whose bottom is below the panel's live height is hidden with
@@ -1544,8 +1554,10 @@ static void pl_lane(uintptr_t fw, int h, int render) {
  * with the row on, the strip moves into the WAVEFORM view at the bottom with JUCE's own
  * removeChildComponent / addChildComponent (Key in Track Title's calls) and the view's
  * two-row track info (gui::waveform::PlayerInfoFieldWidget) hides; EP147 keeps updating the
- * strip there. Any other screen, mode or the row off: the strip goes back to BrowseView at its
- * own index and bounds, the track info shows again. Every object is vtable-checked at use. */
+ * strip there. EP147 moves the same strip into SOURCE's view and back to BrowseView as those
+ * screens show. Any other screen, mode or the row off: if the strip is still where we put it,
+ * it goes back to where we took it from (index and bounds); if EP147 has moved it since, it is
+ * left there. The track info shows again. Every object is vtable-checked at use. */
 #define CI_STRIP_VT EP_2ceae40   /* gui::waveform::SimpleWaveformFieldWidget */
 #define CI_BROWSE_VT EP_29d67a0  /* gui::browse::BrowseView */
 #define CI_INFO_VT EP_2d3ddc8    /* gui::waveform::PlayerInfoFieldWidget (the two-row track info) */
@@ -1555,6 +1567,9 @@ static struct {
     uintptr_t strip, par; /* the strip and its BrowseView */
     int z, b[4];        /* its index there and its bounds */
     uintptr_t hid;      /* the track info we hid, 0 = none */
+    uintptr_t in;       /* the WaveformView we moved the strip into, 0 = none */
+    uintptr_t from, fvt; /* where it was then (EP147 moves it between screens) and its vtable */
+    int fz, fb[4];      /* its index and bounds there */
 } g_ci;
 static int g_ci_bv_ok; /* g_bv_obj is tracked (install_phasemeter): readable on the message thread */
 static int ci_ok(uintptr_t c, uintptr_t vt) {
@@ -1608,7 +1623,18 @@ static int ci_strip(uintptr_t v) {
     }
     return 0;
 }
-/* the strip into the view (on) or home to BrowseView (off), the track info hidden / shown */
+/* s's index among parent p's children, -1 = not there */
+static int ci_index(uintptr_t p, uintptr_t s) {
+    uintptr_t k = *(volatile uintptr_t *) (p + 0x40);
+    int n = *(volatile int *) (p + 0x50);
+    for (int z = 0; ht_ptr_ok(k) && z < n && z < 64; z++)
+        if (*(volatile uintptr_t *) (k + 8 * z) == s)
+            return z;
+    return -1;
+}
+/* the strip into the view (on), or back where we took it from (off), the track info hidden /
+ * shown. EP147 itself moves the one strip between BROWSE and SOURCE, so it goes back only while
+ * it is still in the view we put it in: once EP147 has moved it, it is EP147's again. */
 static void ci_place(uintptr_t v, int on) {
     uintptr_t s = g_ci.strip;
     if (!ci_ok(s, CI_STRIP_VT) || !ci_ok(g_ci.par, CI_BROWSE_VT))
@@ -1616,9 +1642,16 @@ static void ci_place(uintptr_t v, int on) {
     uintptr_t cur = ci_ok(s, CI_STRIP_VT) ? *(volatile uintptr_t *) (s + 0x18) : 0;
     if (on) {
         if (cur != v) {
-            if (ht_ptr_ok(cur))
+            g_ci.from = g_ci.fvt = 0;
+            if (ht_ptr_ok(cur) && !(cur & 7) && (g_ci.fz = ci_index(cur, s)) >= 0) {
+                g_ci.from = cur;
+                g_ci.fvt = *(volatile uintptr_t *) cur;
+                for (int i = 0; i < 4; i++)
+                    g_ci.fb[i] = *(volatile int *) (s + 0x20 + 4 * i);
                 ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(cur, s);
+            }
             ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(v, s, -1);
+            g_ci.in = v;
         }
         pl_bounds(s, g_ci.b[0], *(volatile int *) (v + 0x2c) - g_ci.b[3], g_ci.b[2], g_ci.b[3]);
         if (!kt_visible(s))
@@ -1630,12 +1663,18 @@ static void ci_place(uintptr_t v, int on) {
         }
         return;
     }
-    if (ci_ok(s, CI_STRIP_VT) && cur != g_ci.par && ci_ok(g_ci.par, CI_BROWSE_VT)) {
-        if (ht_ptr_ok(cur))
-            ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(cur, s);
-        ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(g_ci.par, s, g_ci.z);
-        pl_bounds(s, g_ci.b[0], g_ci.b[1], g_ci.b[2], g_ci.b[3]);
+    if (g_ci.in && ci_ok(s, CI_STRIP_VT) && cur == g_ci.in) {
+        int back = ci_ok(g_ci.from, g_ci.fvt); /* else BrowseView, its home at start-up */
+        ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(cur, s);
+        if (back) {
+            ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(g_ci.from, s, g_ci.fz);
+            pl_bounds(s, g_ci.fb[0], g_ci.fb[1], g_ci.fb[2], g_ci.fb[3]);
+        } else if (ci_ok(g_ci.par, CI_BROWSE_VT)) {
+            ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(g_ci.par, s, g_ci.z);
+            pl_bounds(s, g_ci.b[0], g_ci.b[1], g_ci.b[2], g_ci.b[3]);
+        }
     }
+    g_ci.in = 0;
     if (g_ci.hid) {
         if (ci_ok(g_ci.hid, CI_INFO_VT) && !kt_visible(g_ci.hid))
             kt_set_visible(g_ci.hid, 1);
