@@ -2083,9 +2083,9 @@ static void pm_text(void *g, int font, const uintptr_t *str, int x, int y, int w
 #define PM_ORANGE 0xFF8C00
 #define PM_BLUE 0x28A0FF
 #define PM_RED 0xE62828
-#define PM_X_TEXT 25 /* view x: a row's deck number, countdown and "Bars", under the WAVEFORM title */
 #define PM4_X0 222   /* view x: the 4 DECK rulers, as wide as the 2 DECK meter's */
 #define PM4_X1 1040
+#define PM_X_TEXT (PM4_X0 - 90) /* view x: a row's deck number, countdown and "Bars" (85 px), just left of its ruler as on the CDJ */
 #define PM4T_BAND_Y 74 /* Top: view y of the band's first row (the header ends at 70) */
 #define PM4T_ROW 18    /* Top: one deck's row in the band */
 /* The master: its deck (-1 = none), its number, its bar phase (known = 1) and its memory cue
@@ -2139,7 +2139,7 @@ static void pm_row_label(void *g, int tx, int y, int d, int ism, unsigned col) {
     pm_text(g, 1, &g_pm_bars, tx + 53, y - 5, 32, 13, 0x21, c);
 }
 /* 4 DECK: one row per lane in the band above all lanes, in the lanes' order: its label
- * (pm_row_label) under the WAVEFORM title and its ruler, as wide as the 2 DECK meter's, the
+ * (pm_row_label) just left of its ruler, and the ruler, as wide as the 2 DECK meter's, the
  * master's in orange; ten beats across, red downbeats, and EP147's playhead line through the
  * band. As on the CDJ, where the two rulers' beat ticks reach toward each other, each row's
  * ticks point toward the master's row (down from above it, up from below it, both ways on
