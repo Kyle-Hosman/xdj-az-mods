@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Generated per firmware build. Do not edit by hand. 430 EP147 addresses for azmod.
+/* Generated per firmware build. Do not edit by hand. 431 EP147 addresses for azmod.
  *
  * Code names an EP147 address by its v1.30 value (EP_1b93a28). ep147_addr_init(build)
  * fills ep147_addr[] for the running build, which common/ep147build.h
@@ -129,6 +129,7 @@ enum {
     EPI_1d6f280,
     EPI_1d76f18,
     EPI_1d77468,
+    EPI_1d7f848,
     EPI_1d82b08,
     EPI_1d9fb68,
     EPI_1da09b0,
@@ -562,6 +563,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x1d6f280,
     0x1d76f18,
     0x1d77468,
+    0x1d7f848,
     0x1d82b08,
     0x1d9fb68,
     0x1da09b0,
@@ -994,6 +996,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x1ed9d50,   /* hand: SimpleWaveform4DeckWidget: same as HT_SW_ORIG2 (2.00 slot 14; slot 13 0x1ed9d10 is t */
     0x1ee21c8,   /* hand: gui::waveform::KeyWidget: writes the tray KEY Label (+0x140) with juce::Label::setTe */
     0x1ee2718,   /* hand: KeyWidget: isEnabled() of its KEY row arrow (+0x148; ldr x0,[x0,#0x148]; b Component */
+    0x1eeaaf8,   /* hand: gui::waveform::DeckInfo4DeckWidget paint: slot 26 of its primary vtable (1.30 0x2cfe */
     0x1eedca0,   /* code w=12 | xref 4/4 agree */
     0x1f0ad70,   /* hand: TrackInfo2DeckWidget title setText: 1.30 slot 14 = ldr x0,[x0,#360]; mov w2,#0; b 0x */
     0x1f0c3a0,   /* hand: TrackInfo4DeckWidget: same as HT_ORIG2 (2.00 slot 15; slot 14 0x1f0c380 is the new s */
@@ -1436,6 +1439,7 @@ static int ep147_addr_init(int build){
 #define EP_1d6f280 ((uintptr_t)ep147_addr[EPI_1d6f280])
 #define EP_1d76f18 ((uintptr_t)ep147_addr[EPI_1d76f18])
 #define EP_1d77468 ((uintptr_t)ep147_addr[EPI_1d77468])
+#define EP_1d7f848 ((uintptr_t)ep147_addr[EPI_1d7f848])
 #define EP_1d82b08 ((uintptr_t)ep147_addr[EPI_1d82b08])
 #define EP_1d9fb68 ((uintptr_t)ep147_addr[EPI_1d9fb68])
 #define EP_1da09b0 ((uintptr_t)ep147_addr[EPI_1da09b0])

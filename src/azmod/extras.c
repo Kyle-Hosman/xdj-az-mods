@@ -1428,6 +1428,27 @@ static void pl_squeeze(uintptr_t c, const struct pl4 *L) {
         }
     }
 }
+/* A left DECK panel's background is its own paint (DeckInfo4DeckWidget slot 26, 1.30 0x1d7f848):
+ * five fills at fixed heights for its stock 114 px (a black divider at x 170, the 0x252525 body
+ * 117 high, the 0x232323 source row 41 high and two 0x323232 lines at y 38 and 76), so a panel
+ * pl_squeeze has made taller or shorter keeps a stock-sized background under rows that moved.
+ * While a panel is not at its stock height the same fills are drawn scaled to its height, as its
+ * rows are; at stock height EP147's own paint runs. Message thread (paint), as pl_squeeze. */
+#define PL_PANEL_PAINT EP_1d7f848
+#define PL_PANEL_H 114
+static void (*g_pl_opaint)(uintptr_t, void *);
+static void pl_panel_paint_hook(uintptr_t c, void *g) {
+    int slot, *b = pl_stock(c, 0, &slot), h = *(volatile int *) (c + 0x2c);
+    if (!b || b[3] != PL_PANEL_H || h == PL_PANEL_H || h < 40) {
+        g_pl_opaint(c, g);
+        return;
+    }
+    pm_fill(g, 170, 0, 2, h, 0x000000);
+    pm_fill(g, 0, 0, 170, pl_scale(117, PL_PANEL_H, h), 0x252525);
+    pm_fill(g, 0, 0, 170, pl_scale(41, PL_PANEL_H, h), 0x232323);
+    pm_fill(g, 0, pl_scale(38, PL_PANEL_H, h), 170, 2, 0x323232);
+    pm_fill(g, 0, pl_scale(76, PL_PANEL_H, h), 170, 2, 0x323232);
+}
 /* ---- a lane's waveform box -------------------------------------------------------------
  * A lane's height on screen does not size its waveform: each DetailedWaveformWidget paints a
  * pre-rendered image (drawImageAt, 1.30 0x1e071a0) whose height is the lane box object's
@@ -2191,12 +2212,16 @@ static void install_phasemeter(void) {
     int a = azm_install_hook(PM_LP_UPDATE, (void *) pm_lp_hook, (void **) &g_pm_olp);
     int c = azm_install_hook(PM_MODEL_UPDATE, (void *) pm_model_hook, (void **) &g_pm_omodel);
     int x = ht_install_xnext(); /* tap hook; not used by the meter, harmless if already in */
+    int pp = -2;
+    if (img_q(PM4_PANEL_VT + 26 * 8, &cur) && cur == PL_PANEL_PAINT)
+        pp = azm_patch_vtable(PM4_PANEL_VT + 26 * 8, (void *) pl_panel_paint_hook,
+                              (void **) &g_pl_opaint);
     FILE *f = azlog_open("/tmp/azmod-phase.log", "a");
     if (f) {
         fprintf(f,
                 "install phasemeter: LocalPlayer.update %d view.paintOverChildren %d xnext %d "
-                "model.update %d\n",
-                a, p, x, c);
+                "model.update %d panel.paint %d\n",
+                a, p, x, c, pp);
         fclose(f);
     }
 }
