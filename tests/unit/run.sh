@@ -1617,7 +1617,7 @@ pm4_wiring() { # $1 = extras.c
         { echo "FAIL  pm4 wiring: the countdown is not red under four bars"; return 1; }
     p=$(extract "$1" '^static void pl_tick4\(')
     extract "$1" '^static void pl_layout4\(' | grep -q 'L->f = s\[0\];' &&
-        grep -q 'pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter != 0, -4000, 0, 0);' <<<"$p" ||
+        grep -q 'pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter || (mode != 2 && pm_on() && g_pl_active), -4000, 0, 0);' <<<"$p" ||
         { echo "FAIL  pm4 wiring: the stock lanes or EP147's countdown not put back"; return 1; }
     # the meter's band and Compact Track Info only on a table they fit
     perl -0ne 'exit !/fits = fits && g_pl_stock4\[1 \+ i\] - g_pl_stock4\[i\] >= PM4T_PITCH;\n\s*if \(!fits\)\n\s*meter = 0, compact = 0;/' <<<"$p" ||
@@ -1665,7 +1665,8 @@ pm4_wiring() { # $1 = extras.c
         { echo "FAIL  pm4 wiring: a moved panel, its children or its frame not put back"; return 1; }
     # Top rows: a deck's ruler only from its known phase
     p=$(extract "$1" '^static void pm4_paint_top\(')
-    perl -0ne 'exit !/if \(pm_local_phase\(d, &oph\)\)\n\s*pm_ruler_at\(g, oph,/' <<<"$p" ||
+    perl -0ne 'exit !/if \(pm_loaded\(d\) && pm_local_phase\(d, &oph\)\)\n\s*pm_ruler_at\(g, oph,/' <<<"$p" &&
+        extract "$1" '^static void pm_ruler\(' | grep -q 'if (pm_loaded(d) && pm_local_phase(d, &phase))' ||
         { echo "FAIL  pm4 wiring: a Top ruler from an unknown phase"; return 1; }
 }
 echo "=== phase meter 4 DECK wiring ==="
@@ -1687,10 +1688,10 @@ mutate guest/azmod/extras.c "$d/ctl-paint.c" 's/ \|\| h == PL_PANEL_H \|\| h < 4
 mutate guest/azmod/extras.c "$d/ctl-rcap.c" 's/    if \(render > dwh - CI_RENDER_LESS\)\n        render = dwh - CI_RENDER_LESS;\n//'
 mutate guest/azmod/extras.c "$d/ctl-notours.c" 's/if \(g_pl_box\[i\].mine && \*\(volatile int \*\) \(o \+ OD_RENDER_H\) == g_pl_box\[i\].mine\)/if (g_pl_box[i].mine)/'
 mutate guest/azmod/extras.c "$d/ctl-topart.c" 's/            if \(art \|\| pl_stock\(x, 0, &slot\)\)\n                pl_yscale\(x, 1.0f\);\n//'
-mutate guest/azmod/extras.c "$d/ctl-toprow.c" 's/        if \(pm_local_phase\(d, &oph\)\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
+mutate guest/azmod/extras.c "$d/ctl-toprow.c" 's/        if \(pm_loaded\(d\) && pm_local_phase\(d, &oph\)\)\n            pm_ruler_at\(g, oph,/        if (pm_local_phase(d, \&oph))\n            pm_ruler_at(g, oph,/'
 mutate guest/azmod/extras.c "$d/ctl-nocvt.c" 's/cvt == PM_COUNTDOWN_CTRL_VT &&\s*//'
 mutate guest/azmod/extras.c "$d/ctl-near.c" 's/^#define PM_CUE_NEAR 15 /#define PM_CUE_NEAR 8 /m'
-mutate guest/azmod/extras.c "$d/ctl-nocdw.c" 's/            pl_move\(pl_kid\(fw, PM4_CDW_VT, 0\), meter != 0, -4000, 0, 0\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-nocdw.c" 's/            pl_move\(pl_kid\(fw, PM4_CDW_VT, 0\), meter \|\| \(mode != 2 && pm_on\(\) && g_pl_active\), -4000, 0, 0\);\n//'
 # ---------------------------------------------------------------- drum roll tile 8 (validated chain)
 d="$OUT/drumtile8"; mkdir -p "$d"
 extract guest/azmod/drum_roll_display.c '^static void drum8_index_apply\(void\) \{' > "$d/real.inc"

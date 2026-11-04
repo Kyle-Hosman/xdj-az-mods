@@ -1104,8 +1104,8 @@ static int pm_local_phase(int d, double *out) {
 }
 /* One ruler at bar phase `phase` (beats [0, 4)): the line, then ten beats across (CDJ-style),
  * a red downbeat centered on the line (height rh), white beat ticks dh long from the line
- * toward the middle (in = +1 down, -1 up). The playhead (px) is at the phase. Ticks are tw px
- * wide (3 in the 2-deck band, 2 in the 4 DECK strips), a downbeat one wider. */
+ * toward the middle (in = +1 down, -1 up, 0 both ways). The playhead (px) is at the phase.
+ * Ticks are tw px wide (3 in the 2-deck band, 2 in the 4 DECK band), a downbeat one wider. */
 static void pm_ruler_at(void *g, double phase, int x0, int w, int y, int px, int col, int rh,
                         int dh, int in, int tw) {
     double ppb = w / 10.0;
@@ -1118,16 +1118,27 @@ static void pm_ruler_at(void *g, double phase, int x0, int w, int y, int px, int
             pm_fill(g, x - tw / 2 - 1, y + 1 - rh / 2, tw + 1, rh, 0xE62828); /* line = y, y+1 */
         else if (in > 0)
             pm_fill(g, x - tw / 2, y, tw, dh, 0xFFFFFF); /* from the line, toward the middle */
-        else
+        else if (in < 0)
             pm_fill(g, x - tw / 2, y + 2 - dh, tw, dh, 0xFFFFFF);
+        else
+            pm_fill(g, x - tw / 2, y + 2 - dh, tw, 2 * dh - 2, 0xFFFFFF);
     }
 }
-/* Deck d's ruler (2 DECK and 2/4 DECK): nothing while its phase is unknown. */
+/* Deck d has a track: its waveform widget is registered (pm_wavebox), which happens once a
+ * track loads. An empty deck's phase is not a track's, so its ruler stays a bare line. */
+static int pm_loaded(int d) {
+    int r[4];
+    return pm_wavebox(d, r) != 0;
+}
+/* Deck d's ruler (2 DECK and 2/4 DECK): the bare line while it has no track or its phase is
+ * unknown. */
 static void pm_ruler(void *g, int d, int x0, int w, int y, int px, int col, int rh, int dh,
                      int in) {
     double phase;
-    if (pm_local_phase(d, &phase))
+    if (pm_loaded(d) && pm_local_phase(d, &phase))
         pm_ruler_at(g, phase, x0, w, y, px, col, rh, dh, in, 3);
+    else
+        pm_fill(g, x0, y, w, 2, col);
 }
 /* ---- Phase Layout ----------------------------------------------------------------------
  * Both deck waveforms shorter, with the space above them freed for the Phase Meter.
@@ -1303,9 +1314,9 @@ static void pl_rows(uintptr_t p, int on) {
  * KEY and BEAT JUMP rows in 114 px) and the deck number box beside it (DeckSetup4DeckWidget)
  * move with their lane and take its height, each of their children moved and sized in
  * proportion, so every row stays; their containers grow with them.
- * With a meter, EP147's own countdown in the field (gui::detailed_waveform::CueCountdownWidget,
- * shown for the selected deck of each side) moves out of sight while the meter shows each
- * deck's own. Everything moved keeps its stock bounds, which come back with the stock table. */
+ * While the meter shows (the 4 DECK band, or the 2 DECK band with the phase layout), EP147's own
+ * countdown in each field (gui::detailed_waveform::CueCountdownWidget, shown for the selected
+ * deck of each side) moves out of sight: the meter's rows show each deck's own. Everything moved keeps its stock bounds, which come back with the stock table. */
 #define PM4_SHIFT 22    /* how much each field shrinks under the meter */
 #define PM4T_DOWN 70    /* the meter: how far the first lane moves down */
 #define PM4T_PITCH 104  /* the meter: lane to lane (stock 122) */
@@ -1893,7 +1904,7 @@ static void pl_tick4(uintptr_t v, int mode) {
         fws[d] = fw && mode == 2 && (*(volatile uint32_t *) (fw + 0xc0) & 2) ? fw : 0;
         nf += fws[d] != 0;
         if (fw) {
-            pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter != 0, -4000, 0, 0);
+            pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter || (mode != 2 && pm_on() && g_pl_active), -4000, 0, 0);
             if (!compact)
                 pl_lane(fw, 0, 0);
         }
@@ -2072,9 +2083,9 @@ static void pm_text(void *g, int font, const uintptr_t *str, int x, int y, int w
 #define PM_ORANGE 0xFF8C00
 #define PM_BLUE 0x28A0FF
 #define PM_RED 0xE62828
-#define PM4_X_TEXT 216 /* view x: the countdowns */
-#define PM4_X0 306     /* view x: the rulers, to the lane's right end */
-#define PM4_X1 1066
+#define PM_X_TEXT 25 /* view x: a row's deck number, countdown and "Bars", under the WAVEFORM title */
+#define PM4_X0 222   /* view x: the 4 DECK rulers, as wide as the 2 DECK meter's */
+#define PM4_X1 1040
 #define PM4T_BAND_Y 74 /* Top: view y of the band's first row (the header ends at 70) */
 #define PM4T_ROW 18    /* Top: one deck's row in the band */
 /* The master: its deck (-1 = none), its number, its bar phase (known = 1) and its memory cue
@@ -2097,57 +2108,85 @@ static uint32_t pm4_cue(int d) {
     return __atomic_load_n(&g_pm_cue[d], __ATOMIC_RELAXED);
 }
 /* EP147's playhead x in deck d's waveform box (view coordinates), -1 = none */
-static int pm4_playhead(int d, const int rv[4], int r[4]) {
-    uintptr_t box = pm_wavebox(d, r);
+/* Deck d's waveform box in WaveformView v and its screen rect r: the one its waveform widget
+ * registered (pm_wavebox), else, with no track loaded (no widget yet), the box in the deck's
+ * own field while that field shows, so an empty deck still gets its (empty) ruler. 0 = none. */
+static uintptr_t pm_deckbox(uintptr_t v, int d, int r[4]) {
+    uintptr_t box = pm_wavebox(d, r), fw;
+    if (box || !pl_view_ok(v) || !(fw = pl_field(v, d)) || !(*(volatile uint32_t *) (fw + 0xc0) & 2))
+        return box;
+    box = pl_kid(fw, PM_WAVEBOX_VT, 0);
+    return box && (*(volatile uint32_t *) (box + 0xc0) & 2) && ht_screen_rect(box, r) ? box : 0;
+}
+static int pm4_playhead(uintptr_t v, int d, const int rv[4], int r[4]) {
+    uintptr_t box = pm_deckbox(v, d, r);
     uintptr_t ph = box ? pm_child(box, PM_PLAYHEAD_VT, 1) : 0;
     if (!ph)
         return -1;
     return r[0] - rv[0] + *(volatile int *) (ph + 0x20) + *(volatile int *) (ph + 0x28) / 2;
 }
-/* Top: one row per lane in the band above all lanes, in the lanes' order: the deck's number
- * (an orange box for the master), its memory cue countdown (red under four bars, orange for
- * the master, else blue) and its ruler, the master's in orange; ten beats across, red
- * downbeats, white beat ticks hanging from the line, and EP147's playhead line through the
- * band. A lane whose deck is not known has an empty row. */
-static void pm4_paint_top(void *g, const int rv[4], int rr[4][4]) {
+/* A row's label at view x tx, centered on y: deck d's number (an orange box for the master),
+ * its memory cue countdown and "Bars" (red under four bars, else col). Nothing until the
+ * Strings and Fonts are built. */
+static void pm_row_label(void *g, int tx, int y, int d, int ism, unsigned col) {
+    if (!g_pm4_ok || d < 0 || d > 3)
+        return;
+    uint32_t cd = pm4_cue(d);
+    pm_fill(g, tx, y - 6, 13, 13, ism ? PM_ORANGE : 0x505050);
+    pm_text(g, 1, &g_pm_digit[d + 1], tx, y - 6, 13, 13, 0x24, ism ? 0x000000 : 0xFFFFFF);
+    unsigned c = cd <= PM_CUE_NEAR ? PM_RED : col;
+    pm_text(g, 0, pm_cd_text(cd), tx + 15, y - 7, 35, 16, 0x22, c);
+    pm_text(g, 1, &g_pm_bars, tx + 53, y - 5, 32, 13, 0x21, c);
+}
+/* 4 DECK: one row per lane in the band above all lanes, in the lanes' order: its label
+ * (pm_row_label) under the WAVEFORM title and its ruler, as wide as the 2 DECK meter's, the
+ * master's in orange; ten beats across, red downbeats, and EP147's playhead line through the
+ * band. As on the CDJ, where the two rulers' beat ticks reach toward each other, each row's
+ * ticks point toward the master's row (down from above it, up from below it, both ways on
+ * the master's own row; down when no row is the master's). A lane whose deck is not known
+ * has an empty row. */
+static void pm4_paint_top(uintptr_t v, void *g, const int rv[4], int rr[4][4]) {
     struct pm4_master M;
     pm4_master(&M);
     int x0 = PM4_X0 - rv[0], w = PM4_X1 - PM4_X0, top = PM4T_BAND_Y - rv[1], line = -1;
+    int row[4], px[4], jm = -1;
     if (top < 0)
         return;
-    ((void (*)(void *)) JUCE_G_SAVESTATE)(g);
-    for (int d = 0; d < 4; d++) {
-        int px = pm4_playhead(d, rv, rr[d]), ly = rr[d][1] - rv[1], j = 0;
-        if (px < x0 + 4 || px > x0 + w - 4)
+    for (int d = 0; d < 4; d++) { /* each deck's row (-1 = none) first: the master's sets the ticks */
+        int ly = rr[d][1] - rv[1], j = 0;
+        px[d] = pm4_playhead(v, d, rv, rr[d]);
+        row[d] = -1;
+        if (px[d] < x0 + 4 || px[d] > x0 + w - 4)
             continue;
         while (j < 4 && abs(ly - g_pm4_row[j]) >= g_pm4_pitch / 2)
             j++;
-        if (j == 4)
+        if (j < 4)
+            row[d] = j;
+        if (j < 4 && d == M.lane)
+            jm = j;
+    }
+    ((void (*)(void *)) JUCE_G_SAVESTATE)(g);
+    for (int d = 0; d < 4; d++) {
+        int j = row[d];
+        if (j < 0)
             continue;
         int y = top + j * PM4T_ROW, ism = d == M.lane;
+        int in = jm < 0 || j < jm ? +1 : j > jm ? -1 : 0;
         unsigned col = ism ? PM_ORANGE : PM_BLUE;
         double oph;
-        line = px;
-        if (pm_local_phase(d, &oph))
-            pm_ruler_at(g, oph, x0, w, y + 8, px, col, 14, 6, +1, 2);
+        line = px[d];
+        if (pm_loaded(d) && pm_local_phase(d, &oph))
+            pm_ruler_at(g, oph, x0, w, y + 8, px[d], col, 14, 6, in, 2);
         else
             pm_fill(g, x0, y + 8, w, 2, col);
-        if (g_pm4_ok) {
-            int tx = PM4_X_TEXT - rv[0];
-            uint32_t cd = pm4_cue(d);
-            pm_fill(g, tx, y + 2, 13, 13, ism ? PM_ORANGE : 0x505050);
-            pm_text(g, 1, &g_pm_digit[d + 1], tx, y + 2, 13, 13, 0x24, ism ? 0x000000 : 0xFFFFFF);
-            unsigned c = cd <= PM_CUE_NEAR ? PM_RED : col;
-            pm_text(g, 0, pm_cd_text(cd), tx + 15, y + 1, 35, 16, 0x22, c);
-            pm_text(g, 1, &g_pm_bars, tx + 53, y + 3, 32, 13, 0x21, c);
-        }
+        pm_row_label(g, PM_X_TEXT - rv[0], y + 8, d, ism, col);
     }
     if (line >= 0) {
         pm_fill(g, line - 1, top, 2, 4 * PM4T_ROW, 0xFFFFFF);
         int *b = g_pm_band[g_pm_nband++];
-        b[0] = PM4_X_TEXT - rv[0];
+        b[0] = PM_X_TEXT - rv[0];
         b[1] = top;
-        b[2] = PM4_X1 - PM4_X_TEXT;
+        b[2] = PM4_X1 - PM_X_TEXT;
         b[3] = 4 * PM4T_ROW;
     }
     ((void (*)(void *)) JUCE_G_RESTORESTATE)(g);
@@ -2158,12 +2197,12 @@ static void pm_paint(long self, long g) {
     g_pm_nband = 0;
     if (!pm_on() || !g || pm_trackinfo_open((uintptr_t) self))
         return; /* the band stays 0: pm_tick stops repainting it */
-    /* Decks: the two waveforms on screen, each by the deck its WWB ctor received
-     * (g_wwbbase): 1/2 in 2 DECK, 1/2 or 3/4 in 2/4 DECK. Anything but exactly two showing
+    /* Decks: the two waveforms on screen, each by its deck (pm_deckbox: loaded or not):
+     * 1/2 in 2 DECK, 1/2 or 3/4 in 2/4 DECK. Anything but exactly two showing
      * (4 DECK, a single view): draw nothing. Top ruler = the upper waveform's deck. */
     int rr[4][4], rv[4], dk[2], n = 0;
     for (int d = 0; d < 4; d++)
-        if (pm_wavebox(d, rr[d])) {
+        if (pm_deckbox((uintptr_t) self, d, rr[d])) {
             if (n < 2)
                 dk[n] = d;
             n++;
@@ -2173,7 +2212,7 @@ static void pm_paint(long self, long g) {
             return;
         g_pm_view_vt = *(volatile uintptr_t *) self;
         wref_set(&g_pm_view, (uintptr_t) self);
-        pm4_paint_top((void *) g, rv, rr);
+        pm4_paint_top((uintptr_t) self, (void *) g, rv, rr);
         return;
     }
     if (n != 2)
@@ -2184,7 +2223,7 @@ static void pm_paint(long self, long g) {
         dk[1] = t;
     }
     int da = dk[0], db = dk[1], *r0 = rr[da], *r1 = rr[db];
-    uintptr_t b0 = pm_wavebox(da, r0);
+    uintptr_t b0 = pm_deckbox((uintptr_t) self, da, r0);
     if (!b0)
         return;
     if (r1[1] <= r0[1] || r0[0] != r1[0] || r0[2] != r1[2] || r0[3] < 150)
@@ -2209,9 +2248,9 @@ static void pm_paint(long self, long g) {
     int mid = y0 + h / 2;
     g_pm_view_vt = *(volatile uintptr_t *) self;
     wref_set(&g_pm_view, (uintptr_t) self);
-    g_pm_band[0][0] = x0;
+    g_pm_band[0][0] = PM_X_TEXT - rv[0]; /* from the rows' labels to the rulers' right end */
     g_pm_band[0][1] = y0;
-    g_pm_band[0][2] = w;
+    g_pm_band[0][2] = x0 + w - g_pm_band[0][0];
     g_pm_band[0][3] = h;
     g_pm_nband = 1;
     ((void (*)(void *)) JUCE_G_SAVESTATE)((void *) g);
@@ -2252,12 +2291,14 @@ static void pm_paint(long self, long g) {
     pm_ruler((void *) g, da, x0, w, mid - ro, px, m == da ? 0xFF8C00 : 0x28A0FF, RH, DH, +1);
     pm_ruler((void *) g, db, x0, w, mid + ro, px, m == db ? 0xFF8C00 : 0x28A0FF, RH, DH, -1);
     pm_fill((void *) g, px - 1, mid - ro - 4, 2, 2 * ro + 8, 0xFFFFFF);
+    pm_row_label((void *) g, PM_X_TEXT - rv[0], mid - ro, da, m == da, m == da ? PM_ORANGE : PM_BLUE);
+    pm_row_label((void *) g, PM_X_TEXT - rv[0], mid + ro, db, m == db, m == db ? PM_ORANGE : PM_BLUE);
     ((void (*)(void *)) JUCE_G_RESTORESTATE)((void *) g);
 }
 /* rtick (message thread): mark the band dirty so it moves every frame */
 static void pm_tick(void) {
-    if (pm_on() && g_pl_active4)
-        pm4_init();
+    if (pm_on())
+        pm4_init(); /* the rows' labels, 2 DECK and 4 DECK */
     uintptr_t view = wref_get(&g_pm_view); /* 0 once its destructor ran */
     if (!pm_on() || g_pm_nband <= 0 || !ht_ptr_ok(view))
         return;
