@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Generated per firmware build. Do not edit by hand. 431 EP147 addresses for azmod.
+/* Generated per firmware build. Do not edit by hand. 432 EP147 addresses for azmod.
  *
  * Code names an EP147 address by its v1.30 value (EP_1b93a28). ep147_addr_init(build)
  * fills ep147_addr[] for the running build, which common/ep147build.h
@@ -366,6 +366,7 @@ enum {
     EPI_2c667f8,
     EPI_2cd4b28,
     EPI_2ce30d0,
+    EPI_2ce7020,
     EPI_2ce7c50,
     EPI_2ceae40,
     EPI_2cedcf8,
@@ -800,6 +801,7 @@ static const uint32_t ep147_addr_v130[EPI_N] = {
     0x2c667f8,
     0x2cd4b28,
     0x2ce30d0,
+    0x2ce7020,
     0x2ce7c50,
     0x2ceae40,
     0x2cedcf8,
@@ -1233,6 +1235,7 @@ static const uint32_t ep147_addr_v200[EPI_N] = {
     0x3012548,   /* vtable N3gui11status_area21RecordingStatusWidgetE +0x0 | xref 2/2 agree */
     0x3084a68,   /* hand: RTTI: the only vtable whose type_info names N3gui14LinkInfoWidgetE (typeinfo 0x3084a */
     0x3093008,   /* vtable N3gui8waveform25SimpleWaveform2DeckWidgetE +0x0 */
+    0x3097a40,   /* hand: gui::waveform::SimpleWaveform4DeckFieldWidget primary vtable: the vtable its constru */
     0x3098688,   /* vtable N3gui8waveform25SimpleWaveform4DeckWidgetE +0x0 */
     0x309c160,   /* hand: vtable of gui::waveform::SimpleWaveformFieldWidget (RTTI, offset-to-top 0, the only  */
     0x309f030,   /* hand: RTTI: the primary vtable (offset-to-top 0) of N3gui8waveform9KeyWidgetE; its ctor 1. */
@@ -1676,6 +1679,7 @@ static int ep147_addr_init(int build){
 #define EP_2c667f8 ((uintptr_t)ep147_addr[EPI_2c667f8])
 #define EP_2cd4b28 ((uintptr_t)ep147_addr[EPI_2cd4b28])
 #define EP_2ce30d0 ((uintptr_t)ep147_addr[EPI_2ce30d0])
+#define EP_2ce7020 ((uintptr_t)ep147_addr[EPI_2ce7020])
 #define EP_2ce7c50 ((uintptr_t)ep147_addr[EPI_2ce7c50])
 #define EP_2ceae40 ((uintptr_t)ep147_addr[EPI_2ceae40])
 #define EP_2cedcf8 ((uintptr_t)ep147_addr[EPI_2cedcf8])

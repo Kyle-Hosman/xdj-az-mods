@@ -1416,12 +1416,16 @@ static void pl_squeeze(uintptr_t c, const struct pl4 *L) {
             continue;
         int art = *(volatile uintptr_t *) x == IMAGESCOMP_VT;
         if (!on) {
-            if (art)
+            if (art || pl_stock(x, 0, &slot))
                 pl_yscale(x, 1.0f);
             pl_restore(x);
         } else if ((xb = pl_stock(x, 1, &slot))) {
-            if (art && xb[1] == 0 && xb[3] == s[3]) /* frame art: scaled, not cut */
-                pl_yscale(x, (float) L->ph / (float) s[3]);
+            /* scaled, not cut: frame art, and a child as tall as the panel in a shorter panel
+             * (KEY SHIFT's three buttons open over the panel's rows, 117 px from its top) */
+            int whole = xb[1] == 0 && (art ? xb[3] == s[3] : xb[3] >= s[3] && L->ph < s[3]);
+            pl_yscale(x, whole ? (float) L->ph / (float) s[3] : 1.0f);
+            if (whole)
+                pl_bounds(x, xb[0], 0, xb[2], xb[3]);
             else
                 pl_bounds(x, xb[0], pl_scale(xb[1], s[3], L->ph), xb[2],
                           pl_scale(xb[3], s[3], L->ph));
@@ -1702,6 +1706,143 @@ static void ci_place(uintptr_t v, int on) {
         g_ci.hid = 0;
     }
 }
+/* ---- Compact Track Info: tap a deck's key in the strip ---------------------------------
+ * The strip shows each deck's key in its cell (gui::waveform::SimpleWaveform4DeckWidget, a
+ * juce::Label right of the title). A whole tap on it (Hide Track Title's XNextEvent record,
+ * claimed once) opens that deck's key shift panel, EP147's own KeyShiftWidget from the deck's
+ * left DECK panel, through the same gate as the panel's KEY row arrow (KT_ARROW_OK, then
+ * setVisible), floated into the WAVEFORM view above the cell as Key in Track Title floats it
+ * above a title row, so a collapsed tray cannot clip it. A second tap closes it. It goes back to
+ * its own panel, index and bounds once it closes (EP147 closes it itself when the deck has no
+ * track), or the strip leaves 4 DECK. Decks by identity: the strip's 4-deck field keeps deck
+ * d's cell at +0xc8 + 8 d, DeckInfo4DeckFieldWidget its panel at +0xe8 + 8 d (both builds, from
+ * their constructors), and the panel names its deck at +0xd0. */
+#define CI_SW4_VT EP_2ce7020  /* gui::waveform::SimpleWaveform4DeckFieldWidget: the four cells */
+#define CI_CELL_VT EP_2ce7c50 /* gui::waveform::SimpleWaveform4DeckWidget, its primary vtable */
+#define CI_CELL0 0xc8         /* the field: deck d's cell */
+#define CI_PANEL0 0xe8        /* DeckInfo4DeckFieldWidget: deck d's DeckInfo4DeckWidget */
+static int ci_cell_key(void) {
+    return ep_off(0x208, 0x270); /* a cell's key juce::Label */
+}
+static struct {
+    uintptr_t c, par; /* the panel we floated (0 = none) and its DeckInfo4DeckWidget */
+    int z, b[4];      /* its index and bounds there */
+} g_ci_ks;
+/* the floated panel back to its DeckInfo widget, unless keep and it is still open */
+static void ci_ks_home(int keep) {
+    uintptr_t c = g_ci_ks.c, par = g_ci_ks.par, kw = 0;
+    if (!c)
+        return;
+    if (kt_panel_of(par, &kw) != c) { /* not the panel it was: nothing to put back */
+        g_ci_ks.c = 0;
+        return;
+    }
+    if (keep && kt_visible(c))
+        return;
+    if (kt_visible(c))
+        kt_set_visible(c, 0);
+    uintptr_t cur = *(volatile uintptr_t *) (c + 0x18);
+    if (cur != par) {
+        if (ht_ptr_ok(cur))
+            ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(cur, c);
+        ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(par, c, g_ci_ks.z);
+    }
+    pl_bounds(c, g_ci_ks.b[0], g_ci_ks.b[1], g_ci_ks.b[2], g_ci_ks.b[3]);
+    g_ci_ks.c = 0;
+}
+/* deck d's key shift panel: closed if open, else opened above the key at r (screen) */
+static void ci_ks_toggle(uintptr_t v, int d, const int r[4], int cell_top) {
+    uintptr_t pc = *(volatile uintptr_t *) (v + 0x428), kw = 0;
+    if (!ht_ptr_ok(pc) || *(volatile uintptr_t *) pc != PL_PANELS_VT)
+        return;
+    uintptr_t panels = pl_kid(pc, PM4_PANELS_VT, 0);
+    uintptr_t par = panels ? kt_obj(*(volatile uintptr_t *) (panels + CI_PANEL0 + 8 * d), KT_DI4_VT) : 0;
+    if (!par || *(volatile int *) (par + KT_DI_DECK) != d)
+        return;
+    uintptr_t c = kt_panel_of(par, &kw);
+    if (!c)
+        return;
+    if (kt_visible(c)) { /* ours or opened by the tray's arrow: a tap on the key closes it */
+        kt_set_visible(c, 0);
+        if (g_ci_ks.c == c)
+            ci_ks_home(0);
+        return;
+    }
+    if (g_ci_ks.c)
+        ci_ks_home(0);
+    int area[4], x, y, z = kt_child_index(par, c);
+    int w = *(volatile int *) (c + 0x28), h = *(volatile int *) (c + 0x2c);
+    if (g_ci_ks.c || *(volatile uintptr_t *) (c + 0x18) != par || z < 0 ||
+        !((int (*)(uintptr_t)) KT_ARROW_OK)(kw) || !ht_screen_rect(v, area) ||
+        !kt_panel_at(w, h, r[0] + r[2], cell_top, r[1] + r[3], area, KT_PANEL_TOP, &x, &y))
+        return;
+    g_ci_ks.z = z;
+    for (int i = 0; i < 4; i++)
+        g_ci_ks.b[i] = *(volatile int *) (c + 0x20 + 4 * i);
+    ((void (*)(uintptr_t, uintptr_t)) KT_REMOVE_CHILD)(par, c);
+    ((void (*)(uintptr_t, uintptr_t, int)) KT_ADD_CHILD)(v, c, -1);
+    pl_bounds(c, x - area[0], y - area[1], w, h);
+    g_ci_ks.c = c;
+    g_ci_ks.par = par;
+    kt_set_visible(c, 1);
+}
+/* Where an open key shift panel is (screen rects), for the Phase Meter's Each Lane strips: the
+ * meter paints over the view's children, so a strip under an open panel is left out. Every
+ * deck's panel, in its DeckInfo widget or floated by the strip. Message thread (pl_tick4 writes,
+ * the view's paintOverChildren reads). */
+static int g_pm4_cover[4][4], g_pm4_ncover;
+static void pl_ks_covers(uintptr_t v) {
+    g_pm4_ncover = 0;
+    uintptr_t pc = *(volatile uintptr_t *) (v + 0x428), kw = 0;
+    if (!ht_ptr_ok(pc) || *(volatile uintptr_t *) pc != PL_PANELS_VT)
+        return;
+    uintptr_t panels = pl_kid(pc, PM4_PANELS_VT, 0);
+    for (int d = 0; panels && d < 4; d++) {
+        uintptr_t par = kt_obj(*(volatile uintptr_t *) (panels + CI_PANEL0 + 8 * d), KT_DI4_VT);
+        uintptr_t c = par ? kt_panel_of(par, &kw) : 0;
+        if (c && kt_visible(c) && ht_screen_rect(c, g_pm4_cover[g_pm4_ncover]))
+            g_pm4_ncover++;
+    }
+}
+static int pm4_covered(int x, int y, int w, int h) {
+    for (int i = 0; i < g_pm4_ncover; i++) {
+        const int *r = g_pm4_cover[i];
+        if (x < r[0] + r[2] && r[0] < x + w && y < r[1] + r[3] && r[1] < y + h)
+            return 1;
+    }
+    return 0;
+}
+/* Every tick from pl_tick4: the floated panel home when it should go, then a tap on a key */
+static void ci_key_tap(uintptr_t v, int compact) {
+    ci_ks_home(compact);
+    if (!compact)
+        return;
+    unsigned long t = __atomic_load_n(&g_ht_tap, __ATOMIC_ACQUIRE);
+    unsigned seq = (unsigned) (t >> 32), done = __atomic_load_n(&g_ht_tap_done, __ATOMIC_RELAXED);
+    if (seq == done || now_ms() - __atomic_load_n(&g_ht_tap_ms, __ATOMIC_RELAXED) > HT_TAP_TTL_MS)
+        return;
+    int x = (int) (t & 0xffff), y = (int) (t >> 16 & 0xffff);
+    uintptr_t field = pl_kid(g_ci.strip, CI_SW4_VT, 0), root = v;
+    if (!field)
+        return;
+    for (int i = 0; i < HT_COVER_DEPTH && ht_parent(root); i++)
+        root = ht_parent(root);
+    for (int d = 0; d < 4; d++) {
+        uintptr_t cell = kt_obj(*(volatile uintptr_t *) (field + CI_CELL0 + 8 * d), CI_CELL_VT);
+        uintptr_t key = cell ? kt_obj(*(volatile uintptr_t *) (cell + ci_cell_key()), KT_LABEL_VT) : 0;
+        int r[4], cr[4];
+        if (!key || !kt_visible(key) || !ht_screen_rect(key, r) || x < r[0] || x >= r[0] + r[2] ||
+            y < r[1] || y >= r[1] + r[3])
+            continue;
+        uintptr_t owner = ht_parent(key); /* the cell's Component: nothing shown over it */
+        if (!ht_hit_in(ht_at(root, x, y), owner, ht_parent) || !ht_screen_rect(owner, cr))
+            return;
+        if (__atomic_compare_exchange_n(&g_ht_tap_done, &done, seq, 0, __ATOMIC_RELAXED,
+                                        __ATOMIC_RELAXED))
+            ci_ks_toggle(v, d, r, cr[1]);
+        return;
+    }
+}
 static void pl_tick4(uintptr_t v, int mode) {
     int on4 = mode == 2 && ht_ptr_ok(*(volatile uintptr_t *) (v + 0x18)); /* 4 DECK, on screen */
     int meter = on4 && pm_on() ? (pm4_top() ? 2 : 1) : 0;
@@ -1723,6 +1864,7 @@ static void pl_tick4(uintptr_t v, int mode) {
     if (!ours)
         memcpy(g_pl_stock4, cur, sizeof cur);
     if (g_pl_stock4[0] <= PM4_SHIFT + 80) {
+        ci_key_tap(v, 0);
         ci_place(v, 0);
         return; /* never seen a stock table this could come from: touch nothing */
     }
@@ -1747,6 +1889,8 @@ static void pl_tick4(uintptr_t v, int mode) {
     memcpy(g_pm4_row, L.row, sizeof g_pm4_row);
     g_pm4_pitch = L.pitch;
     ci_place(v, compact);
+    ci_key_tap(v, compact);
+    pl_ks_covers(v);
     /* EP147 reads the 4-deck entries only when it enters 4 DECK (its relayout lays out the
      * 2-deck rows), so in 4 DECK each lane's field is set to its row here: the visible fields
      * top to bottom are the lanes. */
@@ -1983,7 +2127,8 @@ static void pm4_paint(void *g, const int rv[4], int rr[4][4]) {
     for (int d = 0; d < 4; d++) {
         int px = pm4_playhead(d, rv, rr[d]);
         int y0 = rr[d][1] - PM4_STRIP - rv[1], x0 = PM4_X0 - rv[0], w = PM4_X1 - PM4_X0;
-        if (px < 0 || y0 < 0 || px < x0 + 4 || px > x0 + w - 4 || g_pm_nband >= 4)
+        if (px < 0 || y0 < 0 || px < x0 + 4 || px > x0 + w - 4 || g_pm_nband >= 4 ||
+            pm4_covered(PM4_X_TEXT, rr[d][1] - PM4_STRIP, PM4_X1 - PM4_X_TEXT, PM4_STRIP))
             continue;
         int self_m = d == M.lane;
         double oph;
