@@ -582,6 +582,24 @@ static void draw_item_icon_raw(const azmod_fb *fb, int x, int y, int sz, int ite
         aa_icon(fb, x, y, sz, sh, 7, c);
         break;
     }
+    case AZF_DECK_ORDER_4DECK: { /* four lanes and an up-down arrow (4 DECK Order 1 2 3 4) */
+        float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
+        float l = X + S * .10f, r = X + S * .60f, ax = X + S * .80f, t = Y + S * .16f,
+              b = Y + S * .84f, h = S * .10f;
+        struct aa_shape sh[9] = {
+            {0, l, Y + S * .20f, r, Y + S * .20f, w},
+            {0, l, Y + S * .40f, r, Y + S * .40f, w},
+            {0, l, Y + S * .60f, r, Y + S * .60f, w},
+            {0, l, Y + S * .80f, r, Y + S * .80f, w},
+            {0, ax, t, ax, b, w},
+            {0, ax, t, ax - h, t + h, w},
+            {0, ax, t, ax + h, t + h, w},
+            {0, ax, b, ax - h, b - h, w},
+            {0, ax, b, ax + h, b - h, w},
+        };
+        aa_icon(fb, x, y, sz, sh, 9, c);
+        break;
+    }
     case AZF_THEMES: { /* a sun (Day Mode): a ring and eight rays */
         float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f, cx = X + S * .50f,
               cy = Y + S * .50f;

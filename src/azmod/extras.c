@@ -1372,6 +1372,31 @@ static void pl_layout4(int meter, int compact, struct pl4 *L) {
         L->py[i] = down + i * pitch;
     }
 }
+/* 4 DECK Order 1 2 3 4: 1 = decks 1 2 3 4 top to bottom, 0 = EP147's own 3 1 2 4 */
+static int pl_order(void) {
+    return az_on(AZF_DECK_ORDER_4DECK) && az_active(AZF_DECK_ORDER_4DECK);
+}
+/* deck d's lane, 0 = top. Everything in a lane is found by its deck, never by where it is:
+ * the view keeps deck d's waveform field, DeckInfo4DeckFieldWidget its left panel and
+ * DeckSetup4DeckFieldWidget its number box each in a member of their own (both builds, from
+ * the constructors; WaveformView::mouseDown hit-tests the fields the same way). */
+static int pl_lane_of(int d) {
+    static const int stock[4] = {1, 2, 0, 3};
+    return d < 0 || d > 3 ? -1 : pl_order() == 1 ? d : stock[d];
+}
+static const int PL_FIELD_OFF[4] = {0x3f0, 0x3f8, 0x418, 0x420}; /* WaveformView: deck d's field */
+static const int PL_NUM_OFF[4] = {0xd0, 0xd8, 0xc8, 0xe0}; /* DeckSetup4DeckFieldWidget: its box */
+/* deck d's DetailedWaveformFieldWidget Component in view v (a virtual base of the member's
+ * object, at the offset its vtable names), 0 = none */
+static uintptr_t pl_field(uintptr_t v, int d) {
+    uintptr_t o = *(volatile uintptr_t *) (v + PL_FIELD_OFF[d]), vt;
+    intptr_t vb = 0;
+    if ((o & 7) || !ht_ptr_ok(o) || !(vt = *(volatile uintptr_t *) o) ||
+        !img_q(vt - 0x18, (uintptr_t *) &vb) || vb <= 0 || vb > 0x4000)
+        return 0;
+    uintptr_t c = o + (uintptr_t) vb;
+    return ht_ptr_ok(c) && *(volatile uintptr_t *) c == PM_WAVEOUT_VT ? c : 0;
+}
 static int pl_scale(int v, int from, int to) {
     return (int) lround((double) v * to / from);
 }
@@ -1384,31 +1409,36 @@ static void pl_yscale(uintptr_t c, float sy) {
     const float m[6] = {1.0f, 0.0f, 0.0f, 0.0f, sy, 0.0f};
     ((void (*)(uintptr_t, const float *)) PL_SETTRANSFORM)(c, m);
 }
-/* A left panel or number box c to its lane's place in layout L (L->ph != 0), its children in
- * proportion; else c and its children back to stock. Its lane: its stock y in the container
- * is that lane's stock row less the first row's. Each child's stock is kept before c is
- * resized, as c's own layout may run on the resize; the children are set after it. */
-static void pl_squeeze(uintptr_t c, const struct pl4 *L) {
-    int slot, on = L->ph > 0, *b = pl_stock(c, on, &slot), j = 0;
+/* A left panel or number box c to lane's place: in layout L (L->ph != 0) resized, its children
+ * in proportion; else, when 4 DECK Order puts it in another lane, only moved to that lane's
+ * stock place (a stock place is that lane's stock row less the first row's). Otherwise c and
+ * its children back to stock. Each child's stock is kept before c is resized, as c's own
+ * layout may run on the resize; the children are set after it. */
+static void pl_squeeze(uintptr_t c, const struct pl4 *L, int lane) {
+    int slot, want = L->ph > 0 || pl_order() != 0, *b = pl_stock(c, want, &slot), j = 0;
     if (!b)
         return;
     int s[4] = {b[0], b[1], b[2], b[3]};
-    while (j < 4 && s[1] != g_pl_stock4[1 + j] - g_pl_stock4[1])
+    while (j < 4 && s[1] != g_pl_stock4[1 + j] - g_pl_stock4[1]) /* a stock lane's place */
         j++;
-    on = on && j < 4 && s[3] > 40;
+    int ty = L->ph > 0 ? L->py[lane] : g_pl_stock4[1 + lane] - g_pl_stock4[1];
+    int on = want && j < 4 && s[3] > 40 && lane >= 0 && lane < 4 && (L->ph > 0 || ty != s[1]);
+    int sq = on && L->ph > 0; /* squeezed: children in proportion; else only moved */
     uintptr_t kids = *(volatile uintptr_t *) (c + 0x40);
     int n = *(volatile int *) (c + 0x50);
     if (!ht_ptr_ok(kids))
         n = 0;
-    if (on) {
+    if (sq)
         for (int k = 0; k < n && k < 32; k++) {
             uintptr_t x = *(volatile uintptr_t *) (kids + 8 * k);
             if (!(x & 7) && ht_ptr_ok(x))
                 pl_stock(x, 1, &slot);
         }
-        pl_bounds(c, s[0], L->py[j], s[2], L->ph);
-    } else
+    if (on)
+        pl_bounds(c, s[0], ty, s[2], sq ? L->ph : s[3]);
+    else
         pl_restore(c);
+    on = sq;
     for (int k = 0; k < n && k < 32; k++) {
         uintptr_t x = *(volatile uintptr_t *) (kids + 8 * k);
         int *xb;
@@ -1892,33 +1922,25 @@ static void pl_tick4(uintptr_t v, int mode) {
     ci_key_tap(v, compact);
     pl_ks_covers(v);
     /* EP147 reads the 4-deck entries only when it enters 4 DECK (its relayout lays out the
-     * 2-deck rows), so in 4 DECK each lane's field is set to its row here: the visible fields
-     * top to bottom are the lanes. */
+     * 2-deck rows), so in 4 DECK each deck's field is set to its lane's row here (4 DECK
+     * Order: pl_lane_of). */
     uintptr_t fws[4];
     int nf = 0;
-    for (int i = 0; i < 4; i++) {
-        uintptr_t fw = pl_kid(v, PM_WAVEOUT_VT, i);
-        if (fw && mode == 2 && (*(volatile uint32_t *) (fw + 0xc0) & 2))
-            fws[nf++] = fw;
+    for (int d = 0; d < 4; d++) {
+        uintptr_t fw = pl_field(v, d);
+        fws[d] = fw && mode == 2 && (*(volatile uint32_t *) (fw + 0xc0) & 2) ? fw : 0;
+        nf += fws[d] != 0;
         if (fw) {
             pl_move(pl_kid(fw, PM4_CDW_VT, 0), meter != 0, -4000, 0, 0);
             if (!compact)
                 pl_lane(fw, 0, 0);
         }
     }
-    for (int i = 1; i < nf; i++) /* by y */
-        for (int k = i; k > 0 && *(volatile int *) (fws[k] + 0x24) <
-                                     *(volatile int *) (fws[k - 1] + 0x24);
-             k--) {
-            uintptr_t x = fws[k];
-            fws[k] = fws[k - 1];
-            fws[k - 1] = x;
-        }
-    for (int j = 0; nf == 4 && j < 4; j++) {
-        pl_bounds(fws[j], *(volatile int *) (fws[j] + 0x20), wv[1 + j],
-                  *(volatile int *) (fws[j] + 0x28), wv[0]);
+    for (int d = 0; nf == 4 && d < 4; d++) {
+        pl_bounds(fws[d], *(volatile int *) (fws[d] + 0x20), wv[1 + pl_lane_of(d)],
+                  *(volatile int *) (fws[d] + 0x28), wv[0]);
         if (compact)
-            pl_lane(fws[j], L.f, L.render);
+            pl_lane(fws[d], L.f, L.render);
     }
     uintptr_t pc = *(volatile uintptr_t *) (v + 0x428);
     if (pc && ht_ptr_ok(pc) && *(volatile uintptr_t *) pc == PL_PANELS_VT) {
@@ -1929,9 +1951,11 @@ static void pl_tick4(uintptr_t v, int mode) {
         pl_move(pc, compact && grow > 0, 0, 0, grow);
         pl_move(panels, compact && grow > 0, 0, 0, grow);
         pl_move(nums, compact && grow > 0, 0, 0, grow);
-        for (int k = 0; k < 4; k++) {
-            pl_squeeze(pl_kid(panels, PM4_PANEL_VT, k), &L);
-            pl_squeeze(pl_kid(nums, PM4_NUM_VT, k), &L);
+        for (int d = 0; d < 4; d++) { /* each deck's panel and box, by the member that holds it */
+            uintptr_t p = panels ? kt_obj(*(volatile uintptr_t *) (panels + CI_PANEL0 + 8 * d), PM4_PANEL_VT) : 0;
+            uintptr_t b = nums ? kt_obj(*(volatile uintptr_t *) (nums + PL_NUM_OFF[d]), PM4_NUM_VT) : 0;
+            pl_squeeze(p, &L, pl_lane_of(d));
+            pl_squeeze(b, &L, pl_lane_of(d));
         }
     }
     g_pl_active4 = meter;

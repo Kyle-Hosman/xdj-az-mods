@@ -206,6 +206,10 @@ AZ_FEATURE( PHASE_METER_4DECK, "phase-meter-4deck", "4 DECK Placement",         
  * waveforms and left panels taller in the space it frees (extras.c pl_tick4, ci_place) */
 AZ_FEATURE( COMPACT_INFO,      "compact-track-info",         "Compact Track Info",         EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "4 DECK: the decks' info in one row at the bottom, and taller waveforms.")
+/* 4 DECK: the lanes top to bottom in deck order 1 2 3 4, each deck's waveform with its left panel
+ * and number box (extras.c pl_tick4, pl_lane_of); off = EP147's own 3 1 2 4 */
+AZ_FEATURE( DECK_ORDER_4DECK,  "deck-order-4deck",           "4 DECK Order 1 2 3 4",       EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "4 DECK: the waveforms in deck order 1, 2, 3, 4 from the top, not 3, 1, 2, 4.")
 /* the jog spins a track back far past its start, not only 2 s (spin_back.c) */
 AZ_FEATURE( EXTENDED_LEAD_IN, "extended-lead-in",      "Extended Lead-In",        EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "Spin a track back as far as you like before its start.")

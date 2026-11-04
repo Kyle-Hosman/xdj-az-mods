@@ -1626,10 +1626,30 @@ pm4_wiring() { # $1 = extras.c
     # Top and Compact Track Info only on a table they fit
     perl -0ne 'exit !/fits = fits && g_pl_stock4\[1 \+ i\] - g_pl_stock4\[i\] >= PM4T_PITCH;\n\s*if \(!fits && \(meter == 2 \|\| compact\)\)/' <<<"$p" ||
         { echo "FAIL  pm4 wiring: Top or Compact Track Info laid out on a table it does not fit"; return 1; }
-    # the strip in WAVEFORM only while 4 DECK shows with the row on; home to BrowseView otherwise
+    # the strip in WAVEFORM only while 4 DECK shows with the row on; back where it was taken from
+    # otherwise, but only while it is still in the view we put it in: EP147 itself moves the same
+    # strip into SOURCE's view, and taking it back from there leaves SOURCE an empty band
     grep -q 'int compact = on4 && have;' <<<"$p" && grep -q 'ci_place(v, compact);' <<<"$p" &&
-        extract "$1" '^static void ci_place\(' | perl -0ne 'exit !/if \(ci_ok\(s, CI_STRIP_VT\) && cur != g_ci.par && ci_ok\(g_ci.par, CI_BROWSE_VT\)\) \{\n[^\n]*\n[^\n]*\n\s*\(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);/' ||
-        { echo "FAIL  pm4 wiring: the deck strip not sent home to BROWSE"; return 1; }
+        extract "$1" '^static void ci_place\(' | perl -0ne 'exit !/if \(g_ci.in && ci_ok\(s, CI_STRIP_VT\) && cur == g_ci.in\) \{\n(?:[^\n]*\n){3}\s*\(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.from, s, g_ci.fz\);/' ||
+        { echo "FAIL  pm4 wiring: the deck strip not sent back, or taken from a screen EP147 moved it to"; return 1; }
+    # 4 DECK Order: each deck's field, panel and box found by the member that holds it, in its lane
+    grep -q 'uintptr_t fw = pl_field(v, d);' <<<"$p" && grep -q 'wv\[1 + pl_lane_of(d)\]' <<<"$p" &&
+        grep -q 'pl_squeeze(p, &L, pl_lane_of(d));' <<<"$p" && grep -q 'pl_squeeze(b, &L, pl_lane_of(d));' <<<"$p" &&
+        extract "$1" '^static int pl_lane_of\(' | grep -q 'static const int stock\[4\] = {1, 2, 0, 3};' &&
+        extract "$1" '^static uintptr_t pl_field\(' | grep -q '== PM_WAVEOUT_VT ? c : 0;' ||
+        { echo "FAIL  pm4 wiring: a lane's deck not found by identity, or the stock order wrong"; return 1; }
+    # a moved container keeps EP147's own x and width (collapsing the tray changes those)
+    extract "$1" '^static void pl_move\(' |
+        perl -0ne 'exit !/int x = \*\(volatile int \*\) \(c \+ 0x20\), w = \*\(volatile int \*\) \(c \+ 0x28\);\n(?:[^\n]*\n){3}\s*pl_bounds\(c, x, b\[1\] \+ dy, w, b\[3\] \+ dh\);/' ||
+        { echo "FAIL  pm4 wiring: a moved panel container's x or width overwritten"; return 1; }
+    # a tap on a key in the strip: that deck's own panel, through the KEY row arrow's gate
+    extract "$1" '^static void ci_ks_toggle\(' |
+        perl -0ne 'exit !(/if \(!par \|\| \*\(volatile int \*\) \(par \+ KT_DI_DECK\) != d\)\n\s*return;/ && /!\(\(int \(\*\)\(uintptr_t\)\) KT_ARROW_OK\)\(kw\)/)' ||
+        { echo "FAIL  pm4 wiring: a strip key tap opens another deck's panel, or skips EP147's gate"; return 1; }
+    # a panel at its stock height paints itself; only a resized one gets the scaled fills
+    extract "$1" '^static void pl_panel_paint_hook\(' |
+        perl -0ne 'exit !/if \(!b \|\| b\[3\] != PL_PANEL_H \|\| h == PL_PANEL_H \|\| h < 40\) \{\n\s*g_pl_opaint\(c, g\);/' ||
+        { echo "FAIL  pm4 wiring: a stock-height panel not painted by EP147"; return 1; }
     # the strip found without a visit to BROWSE: under BrowseView as setvis_hook saw it, read only
     # while that pointer is tracked (cleared by the component destructor hook) and vtable-checked
     extract "$1" '^static int ci_strip\(' |
@@ -1643,9 +1663,9 @@ pm4_wiring() { # $1 = extras.c
         grep -q 'int still = g_pl_box\[i\].h && \*(volatile int \*) (box + 0x2c) == g_pl_box\[i\].h;' <<<"$p" ||
         { echo "FAIL  pm4 wiring: a lane's render height uncapped, or EP147's own geometry overwritten"; return 1; }
     p=$(extract "$1" '^static void pl_squeeze\(')
-    perl -0ne 'exit !/if \(!on\) \{\n\s*if \(art\)\n\s*pl_yscale\(x, 1.0f\);\n\s*pl_restore\(x\);/' <<<"$p" &&
-        perl -0ne 'exit !/\} else\n\s*pl_restore\(c\);/' <<<"$p" &&
-        grep -q 'on = on && j < 4 && s\[3\] > 40;' <<<"$p" ||
+    perl -0ne 'exit !/if \(!on\) \{\n\s*if \(art \|\| pl_stock\(x, 0, &slot\)\)\n\s*pl_yscale\(x, 1.0f\);\n\s*pl_restore\(x\);/' <<<"$p" &&
+        perl -0ne 'exit !/\n\s*else\n\s*pl_restore\(c\);/' <<<"$p" &&
+        grep -q 'int on = want && j < 4 && s\[3\] > 40 && lane >= 0 && lane < 4' <<<"$p" ||
         { echo "FAIL  pm4 wiring: a moved panel, its children or its frame not put back"; return 1; }
     # Top rows: a deck's ruler only from its known phase
     p=$(extract "$1" '^static void pm4_paint_top\(')
@@ -1663,10 +1683,16 @@ mutate guest/azmod/extras.c "$d/ctl-topfit.c" 's/if \(!fits && \(meter == 2 \|\|
 mutate guest/azmod/extras.c "$d/ctl-cibvgate.c" 's/uintptr_t bv = __atomic_load_n\(&g_ci_bv_ok, __ATOMIC_ACQUIRE\) \?\s*__atomic_load_n\(&g_bv_obj, __ATOMIC_ACQUIRE\) : 0;/uintptr_t bv = __atomic_load_n(\&g_bv_obj, __ATOMIC_ACQUIRE);/'
 mutate guest/azmod/extras.c "$d/ctl-cibvvt.c" 's/if \(ci_ok\(bv, CI_BROWSE_VT\) && ci_find\(bv\)\)/if (bv \&\& ci_find(bv))/'
 mutate guest/azmod/extras.c "$d/ctl-cibvtrack.c" 's/__atomic_store_n\(&g_ci_bv_ok, wref_track\(&g_bv_obj, 1, 0\) == 1, __ATOMIC_RELEASE\);/__atomic_store_n(\&g_ci_bv_ok, 1, __ATOMIC_RELEASE);/'
-mutate guest/azmod/extras.c "$d/ctl-cihome.c" 's/        \(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.par, s, g_ci.z\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-cihome.c" 's/            \(\(void \(\*\)\(uintptr_t, uintptr_t, int\)\) KT_ADD_CHILD\)\(g_ci.from, s, g_ci.fz\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-cisteal.c" 's/if \(g_ci.in && ci_ok\(s, CI_STRIP_VT\) && cur == g_ci.in\)/if (ci_ok(s, CI_STRIP_VT) \&\& cur != g_ci.par)/'
+mutate guest/azmod/extras.c "$d/ctl-order.c" 's/static const int stock\[4\] = \{1, 2, 0, 3\};/static const int stock[4] = {0, 1, 2, 3};/'
+mutate guest/azmod/extras.c "$d/ctl-bykid.c" 's/uintptr_t fw = pl_field\(v, d\);/uintptr_t fw = pl_kid(v, PM_WAVEOUT_VT, d);/'
+mutate guest/azmod/extras.c "$d/ctl-collapse.c" 's/pl_bounds\(c, x, b\[1\] \+ dy, w, b\[3\] \+ dh\);/pl_bounds(c, b[0] + dx, b[1] + dy, b[2], b[3] + dh);/'
+mutate guest/azmod/extras.c "$d/ctl-ksdeck.c" 's/if \(!par \|\| \*\(volatile int \*\) \(par \+ KT_DI_DECK\) != d\)/if (!par)/'
+mutate guest/azmod/extras.c "$d/ctl-paint.c" 's/ \|\| h == PL_PANEL_H \|\| h < 40\) \{/ || h < 40) {/'
 mutate guest/azmod/extras.c "$d/ctl-rcap.c" 's/    if \(render > dwh - CI_RENDER_LESS\)\n        render = dwh - CI_RENDER_LESS;\n//'
 mutate guest/azmod/extras.c "$d/ctl-notours.c" 's/if \(g_pl_box\[i\].mine && \*\(volatile int \*\) \(o \+ OD_RENDER_H\) == g_pl_box\[i\].mine\)/if (g_pl_box[i].mine)/'
-mutate guest/azmod/extras.c "$d/ctl-topart.c" 's/            if \(art\)\n                pl_yscale\(x, 1.0f\);\n//'
+mutate guest/azmod/extras.c "$d/ctl-topart.c" 's/            if \(art \|\| pl_stock\(x, 0, &slot\)\)\n                pl_yscale\(x, 1.0f\);\n//'
 mutate guest/azmod/extras.c "$d/ctl-toprow.c" 's/        if \(pm_local_phase\(d, &oph\)\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
 mutate guest/azmod/extras.c "$d/ctl-noown.c" 's/        if \(ok\)\n            pm_ruler_at\(g, oph,/        if (1)\n            pm_ruler_at(g, oph,/'
 mutate guest/azmod/extras.c "$d/ctl-nocvt.c" 's/cvt == PM_COUNTDOWN_CTRL_VT &&\s*//'
@@ -4450,6 +4476,12 @@ control "pm4 wiring: BrowseView read without its tracking"           pm4_wiring 
 control "pm4 wiring: BrowseView taken without its vtable check"      pm4_wiring "$OUT/pm4/ctl-cibvvt.c"
 control "pm4 wiring: BrowseView pointer never tracked"               pm4_wiring "$OUT/pm4/ctl-cibvtrack.c"
 control "pm4 wiring: the deck strip never sent home"                 pm4_wiring "$OUT/pm4/ctl-cihome.c"
+control "pm4 wiring: the deck strip taken back from SOURCE"           pm4_wiring "$OUT/pm4/ctl-cisteal.c"
+control "pm4 wiring: 4 DECK lanes in the wrong stock order"          pm4_wiring "$OUT/pm4/ctl-order.c"
+control "pm4 wiring: a lane's field taken by child index"            pm4_wiring "$OUT/pm4/ctl-bykid.c"
+control "pm4 wiring: the panel container's collapse undone"          pm4_wiring "$OUT/pm4/ctl-collapse.c"
+control "pm4 wiring: a strip key tap without the deck check"         pm4_wiring "$OUT/pm4/ctl-ksdeck.c"
+control "pm4 wiring: a stock-height panel painted by the mod"        pm4_wiring "$OUT/pm4/ctl-paint.c"
 control "pm4 wiring: a lane's render height uncapped"                pm4_wiring "$OUT/pm4/ctl-rcap.c"
 control "pm4 wiring: EP147's own render height overwritten"          pm4_wiring "$OUT/pm4/ctl-notours.c"
 control "pm4 wiring: a number box frame left scaled"                 pm4_wiring "$OUT/pm4/ctl-topart.c"
