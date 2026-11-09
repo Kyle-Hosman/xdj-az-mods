@@ -290,5 +290,17 @@ int main(void) {
     CHECK("retire: no callback is left to call", !az_row(dsw)->d.on_change && !az_row(dgo)->d.on_activate && !az_row(dsw)->d.available);
     CHECK("retire: the value is kept", azf_row_value(dsw) == 1);
     CHECK("retire: another mod's rows stay", !az_hidden(fx) && select_left(&s, "FX Bus"));
+
+    /* the same mod turned on again (its init() registers the same rows): the rows come back
+     * with their handles and values, without taking new slots */
+    int dsw2 = azf_register("deadmod", &fd1);
+    int dgo2 = azf_register("deadmod", &fd2);
+    CHECK("revive: the same handles", dsw2 == dsw && dgo2 == dgo);
+    CHECK("revive: listed again, callbacks back", !az_hidden(dsw) && select_left(&s, "Dead Switch") &&
+                                                      az_row(dsw)->d.on_change == changed && az_row(dgo)->d.on_activate == go);
+    CHECK("revive: the value kept through it", azf_row_value(dsw) == 1);
+    CHECK("revive: a running row's key is still refused", azf_register("deadmod", &fd1) < 0);
+    CHECK("revive: retired again and revived again, still the same handle",
+          azf_retire_owner("deadmod") == 2 && azf_register("deadmod", &fd1) == dsw);
     return ut_summary();
 }

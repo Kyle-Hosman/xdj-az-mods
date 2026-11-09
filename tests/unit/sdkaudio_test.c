@@ -37,7 +37,9 @@
 typedef struct {
     char id[33];
     int state;
+    int sticky;
 } cm_mod;
+static int cm_running(const cm_mod *c) { return __atomic_load_n(&c->state, __ATOMIC_ACQUIRE) == AZCM_LOADED; }
 /* clang-format off */
 static cm_mod g_cm[5] = {{"mod-a", AZCM_LOADED}, {"mod-b", AZCM_LOADED}, {"mod-c", AZCM_LOADED},
                          {"mod-d", AZCM_LOADED}, {"mod-e", AZCM_LOADED}};

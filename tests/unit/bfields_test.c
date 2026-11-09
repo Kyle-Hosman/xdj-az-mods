@@ -686,6 +686,7 @@ static char g_bf_path[PATH_MAX], g_bf_off[PATH_MAX];
 #define BF_OFF g_bf_off
 #define B2_MEDIA g_media
 #include "libfd.h"
+#include "pioneer_dir.h" /* pd_dir: azmod.c includes it before browse_fields.c */
 #include BF_SRC
 
 /* browse_edit.c's side of a press on a field button: what it was asked, what it answers */

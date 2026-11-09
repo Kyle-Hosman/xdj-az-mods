@@ -185,7 +185,7 @@ track's stems again. A third-party set should contain all four.
 (stereo float at 44100 Hz): four stems of a six-minute track take about 508 MB. Before
 decoding, the deck adds up what the set needs. If that would leave less than 400 MB of
 `MemAvailable` (the build-time constant `AZSTEM_MEM_FLOOR_MB`; the deck's current stems
-count as free), or
+count as free, what another deck's load in progress has yet to write counts as used), or
 `/proc/meminfo` cannot be read, the track plays without stems.
 
 **What AZ-MODS writes.** Ogg Vorbis through libvorbis, 44100 Hz, stereo, at the

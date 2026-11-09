@@ -316,9 +316,11 @@ static bool g_cset_edit;
 static struct ctz g_cset_z;
 static int g_cset_zone; /* 1 = g_cset_z answers, 0 = UTC itself, -1 = the zone cannot be read */
 static const char *const CS_LABEL[CS_NFIELD + 1] = {"Year", "Month", "Day", "Hour", "Minute", "Set Time"};
-/* The newest modification time of a stick's export (rekordbox's files, else the PIONEER folder) */
+/* The newest modification time of a stick's export (rekordbox's files, else the PIONEER folder; .PIONEER
+ * on an HFS+ stick) */
 static int64_t cs_newest_stick(void) {
-    static const char *const REL[] = {"PIONEER/rekordbox/exportLibrary.db", "PIONEER/rekordbox/export.pdb", "PIONEER"};
+    static const char *const REL[] = {"PIONEER/rekordbox/exportLibrary.db", "PIONEER/rekordbox/export.pdb", "PIONEER",
+                                      ".PIONEER/rekordbox/exportLibrary.db", ".PIONEER/rekordbox/export.pdb", ".PIONEER"};
     int64_t best = 0;
     DIR *d = opendir(AZ_USBROOT);
     if (!d)

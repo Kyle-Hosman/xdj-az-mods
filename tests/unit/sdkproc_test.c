@@ -41,6 +41,7 @@ extern char **environ;
 #define AZMOD_STEM_DECKS 4
 typedef struct {
     char id[33], name[48];
+    int sticky;
 } cm_mod;
 static cm_mod g_cm[2] = {{"mod-a", "Mod A"}, {"mod-b", "Mod B"}};
 static char g_dir[2][2][PATH_MAX]; /* [mod][0 assets, 1 data] */

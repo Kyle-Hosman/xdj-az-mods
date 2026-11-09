@@ -37,6 +37,7 @@ struct sdk_filter {
     void *user;
     int off;          /* __atomic: switched off (overruns) */
     unsigned strikes; /* __atomic: overruns so far */
+    int gone;         /* __atomic: its mod was turned off live (sdk_input_forget) */
 };
 static struct sdk_filter g_sdk_ff[SDK_FILTER_MAX];
 static int g_sdk_ff_n;        /* __atomic: published entries */
@@ -48,6 +49,7 @@ struct sdk_touch_filter {
     void *user;
     int off; /* __atomic */
     unsigned strikes;
+    int gone; /* __atomic */
 };
 static struct sdk_touch_filter g_sdk_tf[CM_MAX];
 static int g_sdk_tf_n; /* __atomic */
@@ -108,11 +110,22 @@ static int cm_frame_filter(const char *id, unsigned bus_mask, az_frame_fn fn, vo
         return -1;
     }
     int n = __atomic_load_n(&g_sdk_ff_n, __ATOMIC_RELAXED);
+    /* turned on again after a live stop: its old filter on the same buses takes the new function.
+     * The bus thread reads fn and user only through cm_enter, which fails until init() returns. */
+    for (int i = 0; i < n; i++) {
+        struct sdk_filter *ff = &g_sdk_ff[i];
+        if (ff->c == c && ff->mask == bus_mask && __atomic_load_n(&ff->gone, __ATOMIC_ACQUIRE)) {
+            ff->fn = fn;
+            ff->user = user;
+            __atomic_store_n(&ff->gone, 0, __ATOMIC_RELEASE);
+            return 0;
+        }
+    }
     if (n >= SDK_FILTER_MAX) {
         cm_logf(c, 1, "frame_filter refused: %d filters are registered already", SDK_FILTER_MAX);
         return -1;
     }
-    g_sdk_ff[n] = (struct sdk_filter) {c, bus_mask, fn, user, 0, 0};
+    g_sdk_ff[n] = (struct sdk_filter) {c, bus_mask, fn, user, 0, 0, 0};
     __atomic_or_fetch(&g_sdk_ff_bus, buses, __ATOMIC_RELAXED);
     __atomic_store_n(&g_sdk_ff_n, n + 1, __ATOMIC_RELEASE);
     return 0;
@@ -127,11 +140,20 @@ static int cm_touch_filter(const char *id, az_touch_fn fn, void *user) {
         return -1;
     }
     int n = __atomic_load_n(&g_sdk_tf_n, __ATOMIC_RELAXED);
+    for (int i = 0; i < n; i++) { /* as for frame filters: a mod turned on again reuses its own */
+        struct sdk_touch_filter *tf = &g_sdk_tf[i];
+        if (tf->c == c && __atomic_load_n(&tf->gone, __ATOMIC_ACQUIRE)) {
+            tf->fn = fn;
+            tf->user = user;
+            __atomic_store_n(&tf->gone, 0, __ATOMIC_RELEASE);
+            return 0;
+        }
+    }
     if (n >= CM_MAX) {
         cm_logf(c, 1, "touch_filter refused: %d touch filters are registered already", CM_MAX);
         return -1;
     }
-    g_sdk_tf[n] = (struct sdk_touch_filter) {c, fn, user, 0, 0};
+    g_sdk_tf[n] = (struct sdk_touch_filter) {c, fn, user, 0, 0, 0};
     __atomic_store_n(&g_sdk_tf_n, n + 1, __ATOMIC_RELEASE);
     return 0;
 }
@@ -148,7 +170,8 @@ static int sdk_filter_run(int bus, unsigned char *f, int len) {
     for (int i = 0; i < n; i++) {
         struct sdk_filter *ff = &g_sdk_ff[i];
         if (!(ff->mask & bit) || (ff->mask & AZ_FILTER_RAW) ||
-            __atomic_load_n(&ff->off, __ATOMIC_ACQUIRE) || ff->c->state != AZCM_LOADED)
+            __atomic_load_n(&ff->off, __ATOMIC_ACQUIRE) || __atomic_load_n(&ff->gone, __ATOMIC_ACQUIRE) ||
+            !cm_enter(ff->c))
             continue;
         g_cm_in_frame = 1;
         uint64_t t0 = sdk_ticks();
@@ -156,6 +179,7 @@ static int sdk_filter_run(int bus, unsigned char *f, int len) {
         if (sdk_ticks() - t0 > g_sdk_budget_ticks)
             sdk_strike(ff->c, &ff->strikes, &ff->off, "frame filter");
         g_cm_in_frame = 0;
+        cm_leave(ff->c);
         ran = 1;
         if (r == AZ_FRAME_EATEN)
             return 2;
@@ -176,7 +200,8 @@ static void sdk_filter_copy(int bus, const unsigned char *f, int len, int every_
     for (int i = 0; i < n; i++) {
         struct sdk_filter *ff = &g_sdk_ff[i];
         if (!(ff->mask & bit) || (!every_filter && !(ff->mask & AZ_FILTER_RAW)) ||
-            __atomic_load_n(&ff->off, __ATOMIC_ACQUIRE) || ff->c->state != AZCM_LOADED)
+            __atomic_load_n(&ff->off, __ATOMIC_ACQUIRE) || __atomic_load_n(&ff->gone, __ATOMIC_ACQUIRE) ||
+            !cm_enter(ff->c))
             continue;
         if (!copied) {
             memcpy(copy, f, (size_t) m);
@@ -188,6 +213,7 @@ static void sdk_filter_copy(int bus, const unsigned char *f, int len, int every_
         if (sdk_ticks() - t0 > g_sdk_budget_ticks)
             sdk_strike(ff->c, &ff->strikes, &ff->off, "frame filter");
         g_cm_in_frame = 0;
+        cm_leave(ff->c);
         memcpy(copy, f, (size_t) m); /* the next filter sees the frame as it arrived */
     }
 }
@@ -202,7 +228,8 @@ static int sdk_touch_decide(const az_touch *t) {
     int n = __atomic_load_n(&g_sdk_tf_n, __ATOMIC_ACQUIRE);
     for (int i = 0; i < n; i++) {
         struct sdk_touch_filter *tf = &g_sdk_tf[i];
-        if (__atomic_load_n(&tf->off, __ATOMIC_ACQUIRE) || tf->c->state != AZCM_LOADED)
+        if (__atomic_load_n(&tf->off, __ATOMIC_ACQUIRE) || __atomic_load_n(&tf->gone, __ATOMIC_ACQUIRE) ||
+            !cm_enter(tf->c))
             continue;
         g_cm_in_frame = 1;
         uint64_t t0 = sdk_ticks();
@@ -210,6 +237,7 @@ static int sdk_touch_decide(const az_touch *t) {
         if (sdk_ticks() - t0 > g_sdk_budget_ticks)
             sdk_strike(tf->c, &tf->strikes, &tf->off, "touch filter");
         g_cm_in_frame = 0;
+        cm_leave(tf->c);
         if (r == AZ_TOUCH_TAKE)
             return i;
     }
@@ -247,13 +275,15 @@ static void sdk_touch_read(void *buf, ssize_t r) {
                  * of it (no half touches). An owner switched off meanwhile, or whose mod is no
                  * longer loaded, is not called again; its touch stays blanked until it lifts. */
                 struct sdk_touch_filter *tf = &g_sdk_tf[g_sdk_touch_owner];
-                if (!__atomic_load_n(&tf->off, __ATOMIC_ACQUIRE) && tf->c->state == AZCM_LOADED) {
+                if (!__atomic_load_n(&tf->off, __ATOMIC_ACQUIRE) && !__atomic_load_n(&tf->gone, __ATOMIC_ACQUIRE) &&
+                    cm_enter(tf->c)) {
                     g_cm_in_frame = 1;
                     uint64_t t0 = sdk_ticks();
                     tf->fn(&t, tf->user);
                     if (sdk_ticks() - t0 > g_sdk_budget_ticks)
                         sdk_strike(tf->c, &tf->strikes, &tf->off, "touch filter");
                     g_cm_in_frame = 0;
+                    cm_leave(tf->c);
                 }
             }
         }
@@ -274,4 +304,17 @@ static void sdk_filter_raw(int bus, const unsigned char *f, int len) {
 }
 static void sdk_filter_view(int bus, const unsigned char *f, int len) {
     sdk_filter_copy(bus, f, len, 1);
+}
+
+/* A mod turned off live: none of its filters is offered anything again, until init() registers
+ * them again (they then reuse these slots). UI thread, after the mod's state left LOADED. */
+static void sdk_input_forget(const cm_mod *c) {
+    int n = __atomic_load_n(&g_sdk_ff_n, __ATOMIC_ACQUIRE);
+    for (int i = 0; i < n; i++)
+        if (g_sdk_ff[i].c == c)
+            __atomic_store_n(&g_sdk_ff[i].gone, 1, __ATOMIC_RELEASE);
+    n = __atomic_load_n(&g_sdk_tf_n, __ATOMIC_ACQUIRE);
+    for (int i = 0; i < n; i++)
+        if (g_sdk_tf[i].c == c)
+            __atomic_store_n(&g_sdk_tf[i].gone, 1, __ATOMIC_RELEASE);
 }

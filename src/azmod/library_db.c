@@ -66,14 +66,14 @@ static int sq_text(void *conn, const char *sql, long long p1, char *out, size_t 
     g_sq.finalize(st);
     return got;
 }
-/* "/media/usb/sdb1/PIONEER/rekordbox/exportLibrary.db" -> "/media/usb/sdb1" */
+/* "/media/usb/sdb1/PIONEER/rekordbox/exportLibrary.db" -> "/media/usb/sdb1" (or .PIONEER) */
 static int cp_mount_of(void *conn, char *out, size_t n) {
     static const char *(*fn)(void *, const char *);
     if (!fn)
         *(void **) &fn = dlsym(RTLD_DEFAULT, "sqlite3_db_filename");
     out[0] = 0;
     const char *d = fn ? fn(conn, "main") : 0;
-    const char *cut = d ? strstr(d, "/PIONEER/rekordbox/") : 0;
+    const char *cut = d ? pd_cut(d, "rekordbox/") : 0;
     if (!cut || cut - d >= (long) n)
         return 0;
     snprintf(out, n, "%.*s", (int) (cut - d), d);

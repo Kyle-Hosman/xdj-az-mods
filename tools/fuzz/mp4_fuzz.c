@@ -6,7 +6,7 @@
  *
  * fdk-aac is EP147's own decoder, bound at run time; here it is a stand-in that accepts every
  * access unit and reports 1024 stereo frames at 44.1 kHz, so the sample-table walk runs to the
- * end. libmpg123 is left unbound (its decode is not ours to fuzz).
+ * end. lossless_rate and m4a_alac_rate read the same file. libmpg123 is left unbound (its decode is not ours to fuzz).
  * Input byte 0: even = an .m4a file, odd = an .mp3 file; the rest is the file. */
 #include <dlfcn.h>
 #include <stdint.h>
@@ -60,11 +60,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *d, size_t n) {
     if (d[0] & 1) {
         int rate = -1;
         char vendor[16];
-        int cls = mp3_probe(fz_file("track.mp3", d + 1, n - 1), &rate, vendor, sizeof vendor);
+        long frame = -1, first = -1;
+        int cls = mp3_probe(fz_file("track.mp3", d + 1, n - 1), &rate, vendor, sizeof vendor, &frame,
+                            &first);
         if (getenv("FZ_VERBOSE")) fprintf(stderr, "mp3: cls=%d rate=%d vendor=%s\n", cls, rate, vendor);
         FZ_ASSERT(cls >= MP3_CLS_NONE && cls <= MP3_CLS_NOTAG && strlen(vendor) < sizeof vendor);
+        FZ_ASSERT((frame == 0 || frame == 576 || frame == 1152) && first >= 0);
+        int lr = lossless_rate(fz_file("track.flac", d + 1, n - 1));
+        FZ_ASSERT(lr >= 0 && lr <= 768000);
         return 0;
     }
+    FZ_ASSERT(m4a_alac_rate(fz_file("track.m4a", d + 1, n - 1)) >= 0);
     int rate, aot, sbr;
     char desc[96];
     long got = -1;

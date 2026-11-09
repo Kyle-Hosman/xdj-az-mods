@@ -64,3 +64,7 @@ static int sdk_claim_vslot(const char *id, uintptr_t slot, void *fn, void **orig
     (void) orig;
     return -1;
 }
+static int sdk_proc_forget(const char *id) {
+    (void) id;
+    return 0;
+}

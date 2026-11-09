@@ -44,6 +44,7 @@
 #include "ep147addr.h" /* EP_<v130> -> this build's EP147 address (generated table) */
 #include "ep147png.h"  /* the PNG images in this build's .rodata: where stick art may go */
 #include "bus_cfg.h"   /* settings word, color words and LED blocks the bus threads read */
+#include "pioneer_dir.h" /* PIONEER/ or .PIONEER/: where a stick's rekordbox export is */
 #include "bl_flip.h"   /* BEAT LOOP press: azmod's page flip or EP147's */
 #include "stem_fx_pads.h" /* pads 5-8 as Stem FX pads: tap latches, hold is momentary */
 #include "../common/azlogcap.h" /* every /tmp append is size-capped */
@@ -180,7 +181,20 @@ static int settings_write(const char *path, const char *buf, size_t len, int dur
  * screen is up (not SOURCE), the master (STEMS mod) is on, and that deck's
  * track has stems; on SOURCE / master-off the deck plays normally (value 0).
  * bit7 engaged | bits0-3 = enabled stems (VOCAL/INST/BASS/DRUM). */
+static void (*g_stem_ctl_fn)(int deck, unsigned v); /* azstem_ctl_set; overlay thread */
+static void stem_ctl_resolve(void) {
+    if (!g_stem_ctl_fn) /* azstem is preloaded after us */
+        *(void **) &g_stem_ctl_fn = dlsym(RTLD_DEFAULT, "azstem_ctl_set");
+}
 static void write_stems(const azmod_state *s) {
+    static unsigned last[AZMOD_STEM_DECKS];
+    static int have[AZMOD_STEM_DECKS]; /* the direct call and the file carry last[d] */
+    static int have_ctl;
+    stem_ctl_resolve();
+    if (g_stem_ctl_fn && !have_ctl) { /* the first call since azstem appeared hands over all decks */
+        have_ctl = 1;
+        memset(have, 0, sizeof have);
+    }
     for (int d = 0; d < AZMOD_STEM_DECKS; d++) {
         unsigned v = 0;
         if (azmod_stems_engine(s) && s->stems_available[d]) {
@@ -189,6 +203,12 @@ static void write_stems(const azmod_state *s) {
                 if (s->stem_on[d][i])
                     v |= (1u << i);
         }
+        if (have[d] && v == last[d])
+            continue;
+        last[d] = v;
+        have[d] = 1;
+        if (g_stem_ctl_fn)
+            g_stem_ctl_fn(d, v); /* the audio follows the pad now, not at the next file poll */
         char line[16];
         int n = snprintf(line, sizeof line, "%u\n", v);
         settings_write(STEMS_CTRL_PATH[d], line, (size_t) n, 0);
@@ -287,6 +307,9 @@ static void build_pad_led(const azmod_state *s, int d, unsigned char *out) {
 
 /* Mirror the stem engine (the Stems mod) to azstem.so's audio enable. */
 static void write_enable(const azmod_state *s) {
+    stem_ctl_resolve();
+    if (g_stem_ctl_fn)
+        g_stem_ctl_fn(-1, azmod_stems_engine(s) ? 1u : 0u);
     settings_write(ENABLE_CTRL_PATH, azmod_stems_engine(s) ? "1" : "0", 1, 0);
 }
 
@@ -1947,21 +1970,20 @@ static _Atomic int g_bv_vis;
 static void setvis_hook(long self, int on) {
     /* SearchView visible == on the search screen; unlike the byte-32
      * screen-button bits this also catches touch entry. */
-    if (self > 0x10000 && *(unsigned long *) self == SEARCHVIEW_VT)
+    unsigned long vt = self > 0x10000 ? *(unsigned long *) self : 0; /* tens of thousands of calls a second */
+    if (vt == SEARCHVIEW_VT) {
         __atomic_store_n(&g_search_on, on ? 1 : 0, __ATOMIC_RELAXED);
-    if (self > 0x10000 && *(unsigned long *) self == SEARCHVIEW_VT) {
         __atomic_store_n(&g_sv_obj, (unsigned long) self, __ATOMIC_RELEASE);
         if (on)
             nm_view_changed(1); /* Search opening: its keyboard must be home first */
-    }
-    if (self > 0x10000 && *(unsigned long *) self == BROWSEVIEW_VT) {
+    } else if (vt == BROWSEVIEW_VT) {
         __atomic_store_n(&g_bv_obj, (unsigned long) self, __ATOMIC_RELEASE);
         __atomic_store_n(&g_bv_vis, on ? 1 : 0, __ATOMIC_RELEASE);
         if (!on)
             nm_view_changed(0); /* leaving Browse: naming ends */
+        else
+            __atomic_store_n(&g_browseview_shown, 1, __ATOMIC_RELEASE);
     }
-    if (self > 0x10000 && on && *(unsigned long *) self == BROWSEVIEW_VT)
-        __atomic_store_n(&g_browseview_shown, 1, __ATOMIC_RELEASE);
     if (self == __atomic_load_n(&g_waveview, __ATOMIC_RELAXED))
         __atomic_store_n(&g_wave_vis, on ? 1 : 0, __ATOMIC_RELAXED);
     /* Opt-in census of large components' visibility changes (EP147 never calls

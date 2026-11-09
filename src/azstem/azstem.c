@@ -224,6 +224,7 @@ static _Atomic int g_trace_on = 0; /* /home/root/settings/azstem.trace */
 #define TRACE_PATH "/home/root/settings/azstem.trace"
 #define MUTE_PATH "/home/root/settings/azstem.mute" /* decimal bitmask; development builds only (dev_input_open) */
 #include "azstem_internal.h"
+#include "stem_source_rule.h"
 #include "stem_playback.c"
 #include "stem_envelopes.c"
 #include "deck_track_map.c"
@@ -463,10 +464,48 @@ static void read_mute(void) {
     atomic_store_explicit(&g_mute_mask, m, memory_order_relaxed);
     atomic_store_explicit(&g_allsum, dev_flag(ALLSUM_PATH), memory_order_relaxed);
 }
-static void read_stems(void) {
-    static unsigned prev_em[NDECK];
+/* The stem toggles and the master switch: azmod is in this process and hands them over directly
+ * (azstem_ctl_set), so a pad press does not wait for a file poll. The files stay as the state a
+ * restart starts from, and as the only input while no azmod has called: read_stems skips what
+ * azmod has taken over. g_ctl_lock orders the two writers (the poller's read of a file against
+ * azmod's first call); the audio thread only loads the atomics. */
+#define CTL_MASTER_BIT (1u << NDECK)
+#define CTL_ALL_BITS (CTL_MASTER_BIT | ((1u << NDECK) - 1u))
+static pthread_mutex_t g_ctl_lock = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic unsigned g_ctl_direct; /* bit d: deck d's mask came from azmod; CTL_MASTER_BIT: the master */
+static void stem_ctrl_apply(int d, unsigned v) {
+    static unsigned prev_em[NDECK]; /* g_ctl_lock */
     static int primed_em[NDECK];
+    atomic_store_explicit(&g_dk[d].ctrl, v, memory_order_relaxed);
+    unsigned em = v & 0x0Fu;              /* enabled-stem bits only */
+    if (primed_em[d] && em != prev_em[d]) /* edge: a stem was toggled */
+        atomic_fetch_or_explicit(&g_evict_req, 1u << d, memory_order_relaxed);
+    prev_em[d] = em;
+    primed_em[d] = 1;
+}
+void azstem_ctl_set(int deck, unsigned v);
+/* deck 0..3: that deck's mask (bit7 engaged, bits0-3 enabled stems). deck -1: the master, v 0 or 1. */
+void azstem_ctl_set(int deck, unsigned v) {
+    if (deck < -1 || deck >= NDECK)
+        return;
+    pthread_mutex_lock(&g_ctl_lock);
+    if (deck < 0) {
+        atomic_store_explicit(&g_enable, v != 0, memory_order_relaxed);
+        atomic_fetch_or_explicit(&g_ctl_direct, CTL_MASTER_BIT, memory_order_release);
+    } else {
+        stem_ctrl_apply(deck, v);
+        atomic_fetch_or_explicit(&g_ctl_direct, 1u << deck, memory_order_release);
+    }
+    pthread_mutex_unlock(&g_ctl_lock);
+}
+static void read_stems(void) {
+    if (atomic_load_explicit(&g_ctl_direct, memory_order_acquire) == CTL_ALL_BITS)
+        return;
+    pthread_mutex_lock(&g_ctl_lock);
+    unsigned direct = atomic_load_explicit(&g_ctl_direct, memory_order_relaxed);
     for (int d = 0; d < NDECK; d++) {
+        if (direct >> d & 1u)
+            continue;
         FILE *f = fopen(STEMS_PATH[d], "re");
         unsigned v = 0;
         if (f) {
@@ -474,21 +513,19 @@ static void read_stems(void) {
                 v = 0;
             fclose(f);
         }
-        atomic_store_explicit(&g_dk[d].ctrl, v, memory_order_relaxed);
-        unsigned em = v & 0x0Fu;              /* enabled-stem bits only */
-        if (primed_em[d] && em != prev_em[d]) /* edge: a stem was toggled */
-            atomic_fetch_or_explicit(&g_evict_req, 1u << d, memory_order_relaxed);
-        prev_em[d] = em;
-        primed_em[d] = 1;
+        stem_ctrl_apply(d, v);
     }
-    FILE *ef = fopen(ENABLE_PATH, "re"); /* master; default enabled if absent */
-    int en = 1;
-    if (ef) {
-        int c = fgetc(ef);
-        en = (c != '0');
-        fclose(ef);
+    if (!(direct & CTL_MASTER_BIT)) {
+        FILE *ef = fopen(ENABLE_PATH, "re"); /* master; default enabled if absent */
+        int en = 1;
+        if (ef) {
+            int c = fgetc(ef);
+            en = (c != '0');
+            fclose(ef);
+        }
+        atomic_store_explicit(&g_enable, en, memory_order_relaxed);
     }
-    atomic_store_explicit(&g_enable, en, memory_order_relaxed);
+    pthread_mutex_unlock(&g_ctl_lock);
 }
 
 /* ---- flusher (all off RT): mute at 5Hz, per-deck levels ~1/s ----------- */
@@ -761,7 +798,9 @@ static void *maskpoll_thread(void *arg) {
             } else
                 reported = 0;
         }
-        usleep(50000); /* 20Hz */
+        /* 20 Hz while the toggle files are the input; the stall report above needs only about 2 Hz */
+        usleep(atomic_load_explicit(&g_ctl_direct, memory_order_relaxed) == CTL_ALL_BITS ? 500000
+                                                                                         : 50000);
     }
     return NULL;
 }
@@ -843,6 +882,7 @@ static void *flusher(void *arg) {
                     char pth[64];
                     snprintf(pth, sizeof pth, "/home/root/settings/azstem.avail%s", AVAIL_SFX[d]);
                     publish_write(pth, av ? "1" : "0");
+                    atomic_store_explicit(&g_avail_pub[d], av, memory_order_release);
                     last_avail[d] = av;
                 }
             }

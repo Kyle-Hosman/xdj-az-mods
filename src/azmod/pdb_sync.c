@@ -39,6 +39,7 @@
  * page and crashes rekordbox. So every page written leaves exactly one dirty row, the last
  * one inserted, as rekordbox does after a one-row insert, and ps_walk_ok() refuses any
  * written page whose state the walk would not stop on. */
+#include "pioneer_dir.h" /* PIONEER/ or .PIONEER/: where a stick's rekordbox export is */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1205,7 +1206,7 @@ static int pdbs_sync_one(const char *root, const char *src_root, const struct pd
                          const struct pdbs_item *it, int nit, const struct pdbs_track *trk, int ntrk,
                          FILE *lg) {
     char path[600], bak[620];
-    snprintf(path, sizeof path, "%s/PIONEER/rekordbox/export.pdb", root);
+    snprintf(path, sizeof path, "%s/%s/rekordbox/export.pdb", root, pd_dir(root));
     ps_buf d, s = {0};
     struct ps_map dids = {0}, sloc = {0}, dloc = {0};
     struct ps_named *sn[PT_ART + 1] = {0};
@@ -1238,7 +1239,7 @@ static int pdbs_sync_one(const char *root, const char *src_root, const struct pd
     /* 1. the source's own rows for OneLibrary tracks this pdb lacks */
     if (src_root) {
         char sp[600];
-        snprintf(sp, sizeof sp, "%s/PIONEER/rekordbox/export.pdb", src_root);
+        snprintf(sp, sizeof sp, "%s/%s/rekordbox/export.pdb", src_root, pd_dir(src_root));
         if (ps_load(sp, &s) || s.pl != d.pl || ps_tracks(&s, 0, &sloc)) {
             if (lg)
                 fprintf(lg, "PDB: source %s unreadable: no rows to copy\n", sp);
@@ -1436,7 +1437,7 @@ static int pdbs_sync_one(const char *root, const char *src_root, const struct pd
         static ino_t done_ino[8];
         char db[620];
         struct stat st;
-        snprintf(db, sizeof db, "%s/PIONEER/rekordbox/exportLibrary.db", root);
+        snprintf(db, sizeof db, "%s/%s/rekordbox/exportLibrary.db", root, pd_dir(root));
         int have = 0, slot = 0;
         if (stat(db, &st) == 0)
             for (int i = 0; i < 8; i++) {

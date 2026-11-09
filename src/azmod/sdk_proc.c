@@ -395,23 +395,38 @@ static void *sdk_stop_later(void *arg) {
     return NULL;
 }
 
+/* SIGTERM a running program, SIGKILL after the grace period. Under g_sdk_proc_mu. 0 = sent. */
+static int sdk_proc_term_locked(struct sdk_proc *p) {
+    pid_t pid = p->pid;
+    if (!atomic_load(&p->running) || kill(pid, SIGTERM) != 0)
+        return -1;
+    struct sdk_stop *later = malloc(sizeof *later);
+    if (later)
+        *later = (struct sdk_stop) {p, pid};
+    if (!later || sdk_detach(sdk_stop_later, later) != 0) {
+        free(later);
+        kill(pid, SIGKILL); /* no thread for the grace period: stop it now */
+    }
+    return 0;
+}
+/* A mod turned off live: every program it launched that still runs is stopped. Returns how many. */
+static int sdk_proc_forget(const char *id) {
+    int n = 0;
+    pthread_mutex_lock(&g_sdk_proc_mu);
+    for (int i = 0; i < SDK_PROCS; i++)
+        if (g_sdk_proc[i].id[0] && !strcmp(g_sdk_proc[i].id, id) && sdk_proc_term_locked(&g_sdk_proc[i]) == 0)
+            n++;
+    pthread_mutex_unlock(&g_sdk_proc_mu);
+    return n;
+}
+
 static int sdk_launch_stop(const char *id, int pid) {
     cm_mod *c = cm_self(id, CM_RA(), "launch_stop");
     if (!c)
         return -1;
     pthread_mutex_lock(&g_sdk_proc_mu);
     struct sdk_proc *p = sdk_find_own(id, pid);
-    int rc = -1;
-    if (p && atomic_load(&p->running) && kill(pid, SIGTERM) == 0) {
-        rc = 0;
-        struct sdk_stop *later = malloc(sizeof *later);
-        if (later)
-            *later = (struct sdk_stop) {p, (pid_t) pid};
-        if (!later || sdk_detach(sdk_stop_later, later) != 0) {
-            free(later);
-            kill(pid, SIGKILL); /* no thread for the grace period: stop it now */
-        }
-    }
+    int rc = p ? sdk_proc_term_locked(p) : -1;
     pthread_mutex_unlock(&g_sdk_proc_mu);
     if (rc)
         cm_logf(c, 1, "launch_stop %d refused: not a running program this mod launched", pid);
@@ -562,6 +577,7 @@ static int sdk_handoff(const char *id, const char *path, const char *const argv[
     cm_mod *c = cm_self(id, CM_RA(), "handoff");
     if (!c)
         return -1;
+    __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED); /* lasts until the next start: no live stop */
     struct sdk_handoff *h = calloc(1, sizeof *h);
     if (!h)
         return -1;

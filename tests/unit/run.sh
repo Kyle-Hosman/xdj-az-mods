@@ -20,12 +20,16 @@
 #                (the skipped hour), shown only when synchronized or set (guest/azmod/clock_set.h)
 #   fd tracking  a bus fd that is closed or dup2'd over is forgotten before its number is
 #                reused, and nothing is tracked outside EP147 (guest/azmod/bus_interpose.c)
+#   stem control azmod's direct call and the file poll of the stem toggles (guest/azstem/azstem.c)
 #   azmod.cfg    load_config / save_config / settings_write (guest/azmod/azmod.c)
 #   azmod.conf   the settings file: parse, rewrite, atomic save, and the migration from azmod.cfg
 #                proven equivalent to 1.2.2's load_config + drum-bank radio (guest/azmod/azconf.c)
 #   stem_folder_rank  accepted STEMS/ folder names (guest/azstem/stem_playback.c)
 #   env cache    the stems' envelope cache on the stick: whole or not at all, a cut or impossible file
 #                rejected (guest/azstem/stem_envelopes.c)
+#   stem load    overlapping stem loads cannot take the same free memory; every channel layout
+#                decodes to interleaved stereo and the stream handed over is closed once
+#                (guest/azstem/stem_playback.c stems_mem_admit, decode_stem_progressive)
 #   ofs cache    the stem offset cache on the stick: a lag reused only for the same source and stem
 #                set, anything else a miss (guest/azstem/ofsload.c, stem_playback.c stems_key)
 #   ofs corr     the stem offset correlator: confident for the exact lag of broadband and bass-heavy
@@ -228,6 +232,10 @@
 #                Camelot, into the caller's own string; kill switch = no hook (streaming_key.c)
 #   hcanlz       a track's hot cues from its analysis file, and where they sit on a preview
 #                (guest/azmod/hc_anlz.h)
+#   vdanlz       a track's vocal detection from its analysis file, plain or masked
+#                (guest/azmod/vd_anlz.h)
+#   stemsrc      a stems folder's recorded path and a tag edit (guest/azstem/stem_source_rule.h)
+#   pioneerdir   a stick's export folder, .PIONEER on HFS+ as EP147 decides (guest/azmod/pioneer_dir.h)
 #   smorder      the stem marks worker's order: the rows on screen first (stem_marks.c,
 #                preview_hotcues.c)
 #   stem fx      Stem FX (pads 5-8): echo out and brake rendered from the stem and the press alone,
@@ -707,6 +715,18 @@ for v in real ctl-poly ctl-xorout ctl-init; do
 done
 suite "crc16_x25" "$d/real"
 
+# ---------------------------------------------------------------- subucom_msg_req
+# Only the 16-byte SUBUCOM message request has its descriptor read (guest/azmod/bus_interpose.c ioctl).
+d="$OUT/subreq"; mkdir -p "$d"
+extract guest/azmod/bus_interpose.c '^static int subucom_msg_req\(' > "$d/real.inc"
+grep -q '0x3fffu' "$d/real.inc" || { echo "extraction of subucom_msg_req failed"; exit 2; }
+mutate "$d/real.inc" "$d/ctl-nosize.inc" 's/ && \(\(req >> 16\) & 0x3fffu\) == 0x10u//'   # type byte only
+mutate "$d/real.inc" "$d/ctl-notype.inc" 's/\(\(req >> 8\) & 0xffu\) == 0x70u && //'     # size only
+for v in real ctl-nosize ctl-notype; do
+    $CC "${CFLAGS[@]}" -I$T -DSUBUCOM_INC="\"$d/$v.inc\"" -o "$d/$v" $T/subucom_req_test.c
+done
+suite "subucom_msg_req" "$d/real"
+
 # ---------------------------------------------------------------- clock_tz (the Clock readout's zone)
 # guest/azmod/clock_tz.h natively against the deck's zone files, and copies with one rule broken.
 d="$OUT/clocktz"
@@ -1003,6 +1023,80 @@ for v in real ctl-nosize ctl-nokey ctl-anylag ctl-trailing ctl-inplace; do
 done
 suite "stem offset cache" "$d/real" "$d/scratch-real"
 
+# ---------------------------------------------------------------- the stem offset MP3 probe
+# mp3_probe (ofsload.c): EP147's extra frame follows the Info frame's channel mode, not the vendor
+# string (ofsprobe_test.c)
+d="$OUT/ofsprobe"; mkdir -p "$d"
+{ awk '/^enum \{$/ && !p {p=1} p {print} p && /^static int mp3_probe\(/ {q=1} q && /^}$/ {exit}' guest/azstem/ofsload.c
+  awk '/^static uint32_t be32\(/ {p=1} p {print} p && /^static unsigned char \*mp4_read_moov\(/ {q=1} q && /^}$/ {exit}' guest/azstem/ofsload.c
+  awk '/^\/\* ---- Lossless sources/ {p=1} /^\/\* Frames decoded so far/ {p=0} p {print}' guest/azstem/ofsload.c; } > "$d/real.inc"
+grep -q 'static int mp3_probe(' "$d/real.inc" && grep -q 'a.mode == c.mode' "$d/real.inc" && grep -q 'static int m4a_alac_rate(' "$d/real.inc" || { echo "extraction of the stem offset MP3 probe failed"; exit 2; }
+# control: the frame added whatever the channel modes
+mutate "$d/real.inc" "$d/ctl-anymode.inc" 's/if \(a\.mode == c\.mode\)\n//'
+# control: MPEG-2 frames taken as 1152 samples
+mutate "$d/real.inc" "$d/ctl-mpeg2.inc" 's/a\.ver == 3 \? 1152 : 576/1152/'
+# control: a sync pattern taken for a frame without looking at the next one
+mutate "$d/real.inc" "$d/ctl-nonext.inc" 's/if \(next \+ 4 > n \|\| !mp3_hdr\(b \+ next, &c\) \|\| c\.ver != a\.ver \|\| c\.rate != a\.rate\) \{/if (0) {/; s/(\*rate = a\.rate;)/mp3_hdr(b + next, &c);\n        $1/'
+# control: an Info frame with a gap after it passed over
+mutate "$d/real.inc" "$d/ctl-infogap.inc" 's/(if \(t \+ 4 <= n && \(!memcmp\(b \+ t, "Info", 4\) \|\| !memcmp\(b \+ t, "Xing", 4\)\)\)\n)\s*break;/$1                continue;/'
+# control: only 4 KB looked at after the tag
+mutate "$d/real.inc" "$d/ctl-short.inc" 's/#define MP3_SCAN \(256 \* 1024\)/#define MP3_SCAN 4096/'
+# control: WAV chunks not padded to even sizes
+mutate "$d/real.inc" "$d/ctl-nopad.inc" 's/ \+ \(sz & 1\);/;/'
+# control: the AIFF rate's exponent ignored
+mutate "$d/real.inc" "$d/ctl-aiffexp.inc" 's/\(int\) \(m >> sh\)/(int) (m >> 16)/'
+for v in real ctl-anymode ctl-mpeg2 ctl-nonext ctl-infogap ctl-short ctl-nopad ctl-aiffexp; do
+    $CC "${CFLAGS[@]}" -I$T -DOFSPROBE_INC="\"$d/$v.inc\"" -o "$d/$v" $T/ofsprobe_test.c
+done
+suite "stem offset MP3 probe" "$d/real" "$d"
+
+# ---------------------------------------------------------------- the load side of the stems
+# stems_mem_admit, decode_stem_progressive (stem_playback.c) and stb_vorbis's interleaved read:
+# overlapping loads cannot take the same free memory, every channel layout lands as interleaved
+# stereo, the stream handed over is closed once (stemload_test.c)
+d="$OUT/stemload"; mkdir -p "$d"
+{ awk '/^static pthread_mutex_t g_mem_lock / {p=1} p {print} p && /^static void stems_mem_done\(/ {q=1} q && /^}$/ {exit}' guest/azstem/stem_playback.c
+  awk '/^#define PROG_CHUNK / {p=1} p {print} p && /^}$/ {exit}' guest/azstem/stem_playback.c; } > "$d/real.inc"
+extract guest/azstem/stb_vorbis.c '^int stb_vorbis_get_samples_float_interleaved\(' > "$d/read.inc"
+grep -q 'stems_mem_done' "$d/real.inc" && grep -q 'static void decode_stem_progressive' "$d/real.inc" &&
+    grep -q 'channel_buffer_start' "$d/read.inc" || { echo "extraction of the stem load code failed"; exit 2; }
+# control: another load's unwritten memory not counted
+mutate "$d/real.inc" "$d/ctl-noinflight.inc" 's/a \+ held - inflight - need/a + held - need/'
+# control: written memory counted twice
+mutate "$d/real.inc" "$d/ctl-twice.inc" 's/\* 2 \*\n\s*\(long long\) sizeof\(float\);/* 0;/'
+# control: a deck's previous counts taken as this load's progress
+mutate "$d/real.inc" "$d/ctl-noreset.inc" 's/for \(int k = 0; ok && k < NSTEM; k\+\+\)\n\s*atomic_store_explicit\(&g_stem_dec\[deck\]\[k\], 0, memory_order_relaxed\);//'
+# control: a stereo stream decoded to the wrong place
+mutate "$d/real.inc" "$d/ctl-nodirect.inc" 's/ch == 2 \? &buf\[done \* 2\] : tmp,/ch == 2 ? buf : tmp,/'
+# control: a stream left open on the path to the resampler
+mutate "$d/real.inc" "$d/ctl-leak.inc" 's/(uncommon: full decode \+ resample via the existing path, then expose whole \*\/\n)\s*stb_vorbis_close\(v\);/$1/'
+# control: the stereo read not advancing its output
+mutate "$d/read.inc" "$d/read-ctl-stereo.inc" 's/buffer \+= k\*2;//'
+for v in real ctl-noinflight ctl-twice ctl-noreset ctl-nodirect ctl-leak; do
+    $CC "${CFLAGS[@]}" -pthread -I$T -DSTEMLOAD_INC="\"$d/$v.inc\"" -DSTBREAD_INC="\"$d/read.inc\"" -o "$d/$v" $T/stemload_test.c -lm
+done
+$CC "${CFLAGS[@]}" -pthread -I$T -DSTEMLOAD_INC="\"$d/real.inc\"" -DSTBREAD_INC="\"$d/read-ctl-stereo.inc\"" -o "$d/ctl-stereo" $T/stemload_test.c -lm
+suite "stem load" "$d/real"
+
+# ---------------------------------------------------------------- the stem toggles' two inputs
+# azmod's direct call and the file poll: the poll never overwrites what the call took over, the
+# evict edge, the lock between them under the sanitizers (stemctl_test.c)
+d="$OUT/stemctl"; mkdir -p "$d"
+awk '/^#define CTL_MASTER_BIT / {p=1} p {print} p && /^static void read_stems\(/ {q=1} q && /^}$/ {exit}' guest/azstem/azstem.c > "$d/real.inc"
+grep -q 'azstem_ctl_set' "$d/real.inc" && grep -q 'static void read_stems' "$d/real.inc" || { echo "extraction of the stem control code failed"; exit 2; }
+# control: the poll overwrites a deck the direct call took over
+mutate "$d/real.inc" "$d/ctl-overwrite.inc" 's/if \(direct >> d & 1u\)\n\s*continue;//'
+# control: a toggle raises no evict edge
+mutate "$d/real.inc" "$d/ctl-noedge.inc" 's/atomic_fetch_or_explicit\(&g_evict_req, 1u << d, memory_order_relaxed\);/;/'
+# control: the engaged bit alone taken as a toggle
+mutate "$d/real.inc" "$d/ctl-engaged.inc" 's/unsigned em = v & 0x0Fu;/unsigned em = v \& 0xFFu;/'
+# control: the master poll keeps running after the handover
+mutate "$d/real.inc" "$d/ctl-master.inc" 's/if \(!\(direct & CTL_MASTER_BIT\)\) \{/{/'
+for v in real ctl-overwrite ctl-noedge ctl-engaged ctl-master; do
+    $CC "${CFLAGS[@]}" -pthread -I$T -DSTEMCTL_INC="\"$d/$v.inc\"" -o "$d/$v" $T/stemctl_test.c
+done
+suite "stem control" "$d/real"
+
 # ---------------------------------------------------------------- the stem offset correlator
 # ofs_correlate (key_shift.c): the exact lag, confident for broadband and bass-heavy audio; not
 # confident for audio that repeats inside the window, a lag past the window, or other audio
@@ -1018,7 +1112,9 @@ mutate "$d/real.inc" "$d/ctl-oldlobe.inc" 's/if \(\(l < lo \|\| l > hi\) && cc\[
 mutate "$d/real.inc" "$d/ctl-norival.inc" 's/if \(\(l < lo \|\| l > hi\) && cc\[l \+ LD\] > second\)\n\s*second = cc\[l \+ LD\];/;/'
 # control: a peak on the window's edge given a lead
 mutate "$d/real.inc" "$d/ctl-noedge.inc" 's/if \(bl == -LD \|\| bl == LD\)\n\s*second = best;\n\s*else\n//'
-for v in real ctl-oldlobe ctl-norival ctl-noedge; do
+# control: no second measurement on the second difference
+mutate "$d/real.inc" "$d/ctl-nowhiten.inc" 's/whiten < 2; whiten\+\+/whiten < 1; whiten++/'
+for v in real ctl-oldlobe ctl-norival ctl-noedge ctl-nowhiten; do
     $CC "${CFLAGS[@]}" -I$T -DOFSCORR_INC="\"$d/$v.inc\"" -pthread -o "$d/$v" $T/ofscorr_test.c -lm
 done
 suite "stem offset correlator" "$d/real"
@@ -1865,6 +1961,7 @@ suite "azmod.json" "$d/real"
 # with no community mod loaded or running (coretick_test.c)
 d="$OUT/coretick"; mkdir -p "$d"
 extract_coretick() { # $1 = community.c variant
+    grep -E '^static inline int cm_(running|nlive)\(' "$1"
     grep -E '^static pthread_mutex_t g_sd_cmu|^static struct sd_confirm g_sd_confirm' guest/azmod/sdk_ui.c
     awk '/^\/\* The dialog on screen: UI thread only. \*\/$/ {p=1; next} p {print} p && /^\} g_sd_dlg;$/ {exit}' guest/azmod/sdk_ui.c
     extract guest/azmod/sdk_ui.c '^static void sd_deliver\('
@@ -2030,7 +2127,7 @@ mutate "$d/real.c" "$d/ctl-artover.c" 's/ \|\| \(cp && ps_file_ok\(root, cp\)\)/
 # control 3: a copied track row gets no art when the source stick's row has none
 mutate "$d/real.c" "$d/ctl-srcnoart.c" 's/if \(!sid && typ != PT_ART\)/if (!sid)/'
 for v in real ctl-noart ctl-artover ctl-srcnoart; do
-    $CC "${CFLAGS[@]}" -I$T -DPDBS_INC="\"$d/$v.c\"" -o "$d/$v" $T/pdbart_test.c
+    $CC "${CFLAGS[@]}" -I$T -Iguest/azmod -DPDBS_INC="\"$d/$v.c\"" -o "$d/$v" $T/pdbart_test.c
 done
 suite "export.pdb: a paste's artwork" "$d/real"
 # ---------------------------------------------------------------- export.pdb sync: paths, names, pulls
@@ -2053,7 +2150,7 @@ mutate "$d/real.c" "$d/ctl-freelist.c" 's/(static int ps_free_list\(ps_buf \*d, 
 # control 8: a surplus page left with 0 slots (rekordbox 7's runaway allocation)
 mutate "$d/real.c" "$d/ctl-tomb0.c" 's/(memset\(pg \+ PS_HDR, 0, d->pl - PS_HDR\);[^\n]*\n)    pg\[0x18\] = 1;/$1    pg[0x18] = 0;/'
 for v in real ctl-anlz ctl-encbad ctl-longabort ctl-inplace ctl-stale ctl-norecover ctl-freelist ctl-tomb0; do
-    $CC "${CFLAGS[@]}" -I$T -DPDBS_INC="\"$d/$v.c\"" -o "$d/$v" $T/pdbsync2_test.c
+    $CC "${CFLAGS[@]}" -I$T -Iguest/azmod -DPDBS_INC="\"$d/$v.c\"" -o "$d/$v" $T/pdbsync2_test.c
 done
 suite "export.pdb sync" "$d/real"
 # two sticks at once: the threaded case runs under ThreadSanitizer when the host compiler has
@@ -2061,13 +2158,13 @@ suite "export.pdb sync" "$d/real"
 d="$OUT/pdbthreads"; mkdir -p "$d"
 cp guest/azmod/pdb_sync.c "$d/real.c"
 mutate "$d/real.c" "$d/ctl-nolock.c" 's/    pthread_mutex_lock\(&g_ps_lock\);\n//; s/    pthread_mutex_unlock\(&g_ps_lock\);\n//'
-$CC "${CFLAGS[@]}" -I$T -DPDBS_INC="\"$d/real.c\"" -o "$d/real" $T/pdbthreads_test.c -lpthread
+$CC "${CFLAGS[@]}" -I$T -Iguest/azmod -DPDBS_INC="\"$d/real.c\"" -o "$d/real" $T/pdbthreads_test.c -lpthread
 suite "export.pdb sync: two sticks at once" "$d/real" 10
 PT_TSAN=0
 if [ -n "$SAN" ]; then
     echo "(sanitizer pass: the two-stick ThreadSanitizer case runs in the plain pass; this pass built the suite itself with $SAN)"
-elif AZ_CC_PROBE=1 $CC -std=gnu11 -O1 -g -fsanitize=thread -I$T -DPDBS_INC="\"$d/real.c\"" -o "$d/tsan-real" $T/pdbthreads_test.c -lpthread 2>/dev/null &&
-   AZ_CC_PROBE=1 $CC -std=gnu11 -O1 -g -fsanitize=thread -I$T -DPDBS_INC="\"$d/ctl-nolock.c\"" -o "$d/tsan-ctl-nolock" $T/pdbthreads_test.c -lpthread 2>/dev/null; then
+elif AZ_CC_PROBE=1 $CC -std=gnu11 -O1 -g -fsanitize=thread -I$T -Iguest/azmod -DPDBS_INC="\"$d/real.c\"" -o "$d/tsan-real" $T/pdbthreads_test.c -lpthread 2>/dev/null &&
+   AZ_CC_PROBE=1 $CC -std=gnu11 -O1 -g -fsanitize=thread -I$T -Iguest/azmod -DPDBS_INC="\"$d/ctl-nolock.c\"" -o "$d/tsan-ctl-nolock" $T/pdbthreads_test.c -lpthread 2>/dev/null; then
     PT_TSAN=1
     suite "export.pdb sync: two sticks at once (ThreadSanitizer)" env TSAN_OPTIONS=halt_on_error=1 "$d/tsan-real" 10
 else
@@ -2374,7 +2471,9 @@ $CC -w -Iguest/azmod -Dmain=lanetest_main -Dazmod_ttf_menu=lanetest_ttf_menu -Da
     -c -o "$d/stubs.o" guest/azmod/lanetest.c
 # control 6: retiring a stopped mod's rows does nothing
 mutate guest/azmod/azfeatures.c "$d/azfeatures-ctl-retire.c" 's/    for \(int k = 0; mod_id && k < g_nreg; k\+\+\) \{\n        struct az_reg \*g = &g_reg\[k\];/    for (int k = 0; mod_id \&\& k < 0; k++) {\n        struct az_reg *g = \&g_reg[k];/'
-for v in real ctl-order ctl-set ctl-parent ctl-iconref ctl-icondraw ctl-retire; do
+# control 7: a stopped mod's row registered again refused as a duplicate (no revival)
+mutate guest/azmod/azfeatures.c "$d/azfeatures-ctl-revive.c" 's/            if \(g_reg\[k\]\.retired\) \{/            if (g_reg[k].retired \&\& 0) {/'
+for v in real ctl-order ctl-set ctl-parent ctl-iconref ctl-icondraw ctl-retire ctl-revive; do
     mkdir -p "$d/$v"; cp guest/azmod/menu.c "$d/$v/menu.c"; cp "$d/azfeatures-$v.c" "$d/$v/azfeatures.c"
     [ -f "$d/menu-$v.c" ] && cp "$d/menu-$v.c" "$d/$v/menu.c"
     [ -f "$d/ui_draw-$v.c" ] && cp "$d/ui_draw-$v.c" "$d/$v/ui_draw.c" # menu.c includes it from its own folder first
@@ -2459,12 +2558,14 @@ suite "catalog" "$d/real"
 
 # ---------------------------------------------------------------- an installed mod's page (Mod Menu)
 d="$OUT/cmmod"; mkdir -p "$d"
-for v in real ctl-loaded; do menu_variant "$d/src-$v" screen_community.c; done
+for v in real ctl-loaded ctl-noturning; do menu_variant "$d/src-$v" screen_community.c; done
 # control: the toggle and the reload check read "on" as "loaded" (a refused mod offered Enable)
 mutate guest/azmod/screen_community.c "$d/src-ctl-loaded/screen_community.c" 's/return m->state == AZCM_LOADED \|\| m->state == AZCM_REFUSED \|\| m->state == AZCM_FAILED;/return m->state == AZCM_LOADED;/'
+# control: a checkbox tap shows "after Reload" until the fetcher answers (a mod with stop() then changes live)
+mutate guest/azmod/screen_community.c "$d/src-ctl-noturning/screen_community.c" 's/if \(g_cm_flip\.at && !strcmp\(g_cm_flip\.id, m->id\)/if (0 && g_cm_flip.at && !strcmp(g_cm_flip.id, m->id)/'
 $CC -w -Iguest/azmod -Dmain=lanetest_main -Dazmod_ttf_menu=lanetest_ttf_menu -Dazmod_ttf_menu2=lanetest_ttf_menu2 \
     -Dazcm_count=lanetest_azcm_count -Dazcm_info=lanetest_azcm_info -c -o "$d/stubs.o" guest/azmod/lanetest.c
-for v in real ctl-loaded; do
+for v in real ctl-loaded ctl-noturning; do
     $CC -std=gnu11 -O1 -w -Iguest/azmod -I$T -DMENU_C="\"$d/src-$v/menu.c\"" -DCM_CATALOG="\"$d/catalog-$v\"" \
         -o "$d/$v" $T/cmmod_test.c "$d/stubs.o"
 done
@@ -2921,7 +3022,7 @@ mutate guest/azmod/sdk_input.c "$SI/ctl1.c" 's/                g_sdk_touch_decid
 mutate guest/azmod/sdk_input.c "$SI/ctl2.c" 's/    __atomic_store_n\(off, 1, __ATOMIC_RELEASE\);\n//'
 mutate guest/azmod/sdk_input.c "$SI/ctl3.c" 's/ff->fn\(bus, copy, m, ff->user\);/ff->fn(bus, (unsigned char *) f, m, ff->user);/'
 # control 4: the owner of a touch is called whatever its state, and never timed (the old path)
-mutate guest/azmod/sdk_input.c "$SI/ctl4.c" 's/                if \(!__atomic_load_n\(&tf->off, __ATOMIC_ACQUIRE\) && tf->c->state == AZCM_LOADED\) \{\n                    g_cm_in_frame = 1;\n                    uint64_t t0 = sdk_ticks\(\);\n                    tf->fn\(&t, tf->user\);\n                    if \(sdk_ticks\(\) - t0 > g_sdk_budget_ticks\)\n                        sdk_strike\(tf->c, &tf->strikes, &tf->off, "touch filter"\);\n                    g_cm_in_frame = 0;\n                \}/                g_cm_in_frame = 1;\n                tf->fn(\&t, tf->user);\n                g_cm_in_frame = 0;/'
+mutate guest/azmod/sdk_input.c "$SI/ctl4.c" 's/                if \(!__atomic_load_n\(&tf->off, __ATOMIC_ACQUIRE\) && !__atomic_load_n\(&tf->gone, __ATOMIC_ACQUIRE\) &&\n                    cm_enter\(tf->c\)\) \{\n                    g_cm_in_frame = 1;\n                    uint64_t t0 = sdk_ticks\(\);\n                    tf->fn\(&t, tf->user\);\n                    if \(sdk_ticks\(\) - t0 > g_sdk_budget_ticks\)\n                        sdk_strike\(tf->c, &tf->strikes, &tf->off, "touch filter"\);\n                    g_cm_in_frame = 0;\n                    cm_leave\(tf->c\);\n                \}/                g_cm_in_frame = 1;\n                tf->fn(\&t, tf->user);\n                g_cm_in_frame = 0;/'
 for k in 1 2 3 4; do si_build "$SI/ctl$k.c" "$SI/ctl$k" || failures=$((failures + 1)); done
 echo
 
@@ -3400,6 +3501,49 @@ for v in real ctl-nopco2 ctl-seclen ctl-entrylen ctl-comment ctl-pastend ctl-pic
 done
 suite "hot cues from analysis files" "$d/real"
 
+# Vocal Indicator: a track's vocal detection from its analysis file
+d="$OUT/vdanlz"; mkdir -p "$d"
+cp guest/azmod/vd_anlz.h "$d/real.h"
+mutate "$d/real.h" "$d/ctl-nomask.h"  's/masked \? \(uint8_t\) \(v\[i\] \^ VD_KEY\[i % 19\]\) : v\[i\]/v[i]/'
+mutate "$d/real.h" "$d/ctl-hopbit.h"  's/    h &= 0x7fffffffu;\n//'
+mutate "$d/real.h" "$d/ctl-count.h"   's/ \|\| n != len - VD_HDR\)/)/'
+mutate "$d/real.h" "$d/ctl-level.h"   's/if \(x > VD_MAX_LEVEL\)/if (0)/'
+mutate "$d/real.h" "$d/ctl-colmax.h"  's/if \(t->v\[i\] > col\[x\]\)\n            //'
+mutate "$d/real.h" "$d/ctl-wavedx.h"  's/double t0 = pos_ms \+ \(x \+ dx0\) \/ ppm/double t0 = pos_ms + x \/ ppm/'
+mutate "$d/real.h" "$d/ctl-stemother.h" 's/ && pv\[i\] \* 4u >= po\[i\] \* 3u//'
+mutate "$d/real.h" "$d/ctl-stemfloor.h" 's/pv\[i\] >= VD_STEM_FLOOR && //'
+mutate "$d/real.h" "$d/ctl-stemrun.h"   's/e - i < VD_STEM_MIN_RUN/0/'
+mutate "$d/real.h" "$d/ctl-stemgap.h"   's/i - last - 1 <= VD_STEM_GAP/0/'
+mutate "$d/real.h" "$d/ctl-rbfirst.h"   's/if \(has_stem\)/if (has_stem \&\& !has_rb)/'
+mutate "$d/real.h" "$d/ctl-norb.h"      's/if \(has_rb\)/if (0)/'
+mutate "$d/real.h" "$d/ctl-stempeak.h"  's/#define VD_STEM_SMOOTH 11u/#define VD_STEM_SMOOTH 0u/'
+for v in real ctl-nomask ctl-hopbit ctl-count ctl-level ctl-colmax ctl-wavedx ctl-stemother ctl-stemfloor ctl-stemrun ctl-stemgap ctl-rbfirst ctl-norb ctl-stempeak; do
+    $CC "${CFLAGS[@]}" -I$T -DVDANLZ_HDR="\"$d/$v.h\"" -o "$d/$v" $T/vdanlz_test.c
+done
+suite "vocal detection from analysis files" "$d/real"
+# A stems folder's recorded path and a tag edit
+d="$OUT/stemsrc"; mkdir -p "$d"
+cp guest/azstem/stem_source_rule.h "$d/real.h"
+mutate "$d/real.h" "$d/ctl-exact.h"  's/return d <= STEM_SAME_PATH_SLACK;/return d == 0;/'
+mutate "$d/real.h" "$d/ctl-any.h"    's/return d <= STEM_SAME_PATH_SLACK;/return 1;/'
+mutate "$d/real.h" "$d/ctl-grow.h"   's/recorded > now \? recorded - now : now - recorded/now - recorded/'
+for v in real ctl-exact ctl-any ctl-grow; do
+    $CC "${CFLAGS[@]}" -I$T -DSTEMSRC_HDR="\"$d/$v.h\"" -o "$d/$v" $T/stemsrc_test.c
+done
+suite "stems folder path and tag edits" "$d/real"
+# A stick's rekordbox export folder: .PIONEER on HFS+, PIONEER otherwise, as EP147 decides it
+d="$OUT/pioneerdir"; mkdir -p "$d"
+cp guest/azmod/pioneer_dir.h "$d/real.h"
+mutate "$d/real.h" "$d/ctl-first.h"   's/hfs = fl == 7 && /hfs |= fl == 7 \&\& /'
+mutate "$d/real.h" "$d/ctl-fsname.h"  's/hfs = fl == 7 && /hfs = /'
+mutate "$d/real.h" "$d/ctl-mplen.h"   's/\(size_t\) \(fs - mp\) == ml && //'
+mutate "$d/real.h" "$d/ctl-nodot.h"   's/ \+ \(p\[1\] == .\..\)//'
+mutate "$d/real.h" "$d/ctl-stored.h"  's/return snprintf\(out, n, "%s\/%s%.\*s%s", mount, dir,/return snprintf(out, n, "%s\/PIONEER%.*s%s", mount,/'
+for v in real ctl-first ctl-fsname ctl-mplen ctl-nodot ctl-stored; do
+    $CC "${CFLAGS[@]}" -I$T -DPIONEERDIR_HDR="\"$d/$v.h\"" -o "$d/$v" $T/pioneerdir_test.c
+done
+suite "stick export folder" "$d/real"
+
 # The stem marks worker's order: track rows' stems, then the hot cues of the rows on screen,
 # then playlist rows (stem_marks.c sm_pop / sm_serve_tracks / sm_work_one, preview_hotcues.c)
 d="$OUT/smorder"; mkdir -p "$d"
@@ -3750,7 +3894,7 @@ d="$OUT/sdkrows"; mkdir -p "$d"
   extract guest/azmod/sdk_rows.c '^static int cm_row_set\('; } > "$d/real.inc"
 grep -q 'cm_called_by(c, CM_RA())' "$d/real.inc" || { echo "extraction of cm_row_set failed"; exit 2; }
 # control: any mod's row set (the owner not checked)
-mutate "$d/real.inc" "$d/ctl-anyowner.inc" 's/    if \(!c \|\| !cm_called_by\(c, CM_RA\(\)\) \|\|\n\s*\(c->state != AZCM_LOADED && \(int\) \(c - g_cm\) != g_cm_loading\)\) \{/    if (0) {/'
+mutate "$d/real.inc" "$d/ctl-anyowner.inc" 's/    if \(!c \|\| !cm_called_by\(c, CM_RA\(\)\) \|\|\n\s*\(!cm_running\(c\) && \(int\) \(c - g_cm\) != g_cm_loading\)\) \{/    if (0) {/'
 for v in real ctl-anyowner; do
     $CC "${CFLAGS[@]}" -I$T -DSDKROWS_INC="\"$d/$v.inc\"" -o "$d/$v" $T/sdkrows_test.c
 done
@@ -4172,6 +4316,8 @@ done
 control "crc16_x25: unreflected polynomial 0x1021"        "$OUT/crc/ctl-poly"
 control "crc16_x25: final xor dropped"                    "$OUT/crc/ctl-xorout"
 control "crc16_x25: init 0 instead of 0xFFFF"             "$OUT/crc/ctl-init"
+control "subucom_msg_req: type byte only (reads 1-2 byte args)" "$OUT/subreq/ctl-nosize"
+control "subucom_msg_req: size only (another request type)" "$OUT/subreq/ctl-notype"
 control "clock_tz: a transition applies one second late"    "$OUT/clocktz/ctl-edge/t" $T/fixtures/zoneinfo
 control "clock_tz: a DST footer rule read as no DST"       "$OUT/clocktz/ctl-rule/t" $T/fixtures/zoneinfo
 control "clock_tz: transition times not checked for order" "$OUT/clocktz/ctl-order/t" $T/fixtures/zoneinfo
@@ -4253,6 +4399,7 @@ control "catalog: a shelf draws past the grid's edge"        "$OUT/cmcat/ctl-row
 control "catalog: the knob on Home scrolls nothing"         "$OUT/cmcat/ctl-homeknob"
 control "catalog: the mod page's dot as UTF-8"              "$OUT/cmcat/ctl-dotutf8"
 control "installed mod page: \"on\" read as \"loaded\" (a refused mod offered Enable)" "$OUT/cmmod/ctl-loaded"
+control "installed checkbox tap: \"after Reload\" shown before the answer" "$OUT/cmmod/ctl-noturning"
 control "not loaded: Reload resets the page to the question Load next time answered" "$OUT/cmnotloaded/ctl-reset"
 control "not loaded: the notice on the Browse tab too"              "$OUT/cmnotloaded/ctl-alltabs"
 control "not loaded: no Reload in the header after Load next time"  "$OUT/cmnotloaded/ctl-nobutton"
@@ -4497,9 +4644,23 @@ control "stem offset cache: another stem set taken" "$OUT/ofscache/ctl-nokey" "$
 control "stem offset cache: a lag past the window taken" "$OUT/ofscache/ctl-anylag" "$OUT/ofscache/scratch-ctl-anylag"
 control "stem offset cache: text after the line taken" "$OUT/ofscache/ctl-trailing" "$OUT/ofscache/scratch-ctl-trailing"
 control "stem offset cache: saved in place" "$OUT/ofscache/ctl-inplace" "$OUT/ofscache/scratch-ctl-inplace"
+control "stem offset MP3 probe: the frame whatever the modes" "$OUT/ofsprobe/ctl-anymode" "$OUT/ofsprobe"
+control "stem offset MP3 probe: MPEG-2 frames as 1152" "$OUT/ofsprobe/ctl-mpeg2" "$OUT/ofsprobe"
+control "stem offset MP3 probe: no look at the next frame" "$OUT/ofsprobe/ctl-nonext" "$OUT/ofsprobe"
+control "stem offset MP3 probe: an Info frame with a gap passed over" "$OUT/ofsprobe/ctl-infogap" "$OUT/ofsprobe"
+control "stem offset MP3 probe: only 4 KB after the tag" "$OUT/ofsprobe/ctl-short" "$OUT/ofsprobe"
+control "stem offset source rate: WAV chunks not padded" "$OUT/ofsprobe/ctl-nopad" "$OUT/ofsprobe"
+control "stem offset source rate: AIFF exponent ignored" "$OUT/ofsprobe/ctl-aiffexp" "$OUT/ofsprobe"
+control "stem load: another load's unwritten memory not counted" "$OUT/stemload/ctl-noinflight"
+control "stem load: written memory counted twice" "$OUT/stemload/ctl-twice"
+control "stem load: a previous track's counts taken as progress" "$OUT/stemload/ctl-noreset"
+control "stem load: stereo decoded to the wrong place" "$OUT/stemload/ctl-nodirect"
+control "stem load: a stream left open before the resampler" "$OUT/stemload/ctl-leak"
+control "stem load: the stereo read not advancing" "$OUT/stemload/ctl-stereo"
 control "stem offset correlator: a bass lobe's shoulder taken as a rival" "$OUT/ofscorr/ctl-oldlobe"
 control "stem offset correlator: no runner-up" "$OUT/ofscorr/ctl-norival"
 control "stem offset correlator: a peak on the window's edge confident" "$OUT/ofscorr/ctl-noedge"
+control "stem offset correlator: no second measurement for sustained bass" "$OUT/ofscorr/ctl-nowhiten"
 control "remote stems request: a title's line break adds a key line" "$OUT/rsreq/ctl-title" "$OUT/rsreq/scratch-ctl-title"
 control "remote stems request: a split or cut path queued" "$OUT/rsreq/ctl-path" "$OUT/rsreq/scratch-ctl-path"
 control "remote stems scan: any file in the queue counted as a request" "$OUT/rsscan/ctl-anyfile" "$OUT/rsscan/scratch-ctl-anyfile"
@@ -4732,6 +4893,27 @@ control "hot cues: an entry longer than its section is read"      "$OUT/hcanlz/c
 control "hot cues: the color is read before the comment"          "$OUT/hcanlz/ctl-comment"
 control "hot cues: a cue past the track's end is drawn"           "$OUT/hcanlz/ctl-pastend"
 control "hot cues: the cue-section reader skips the colored PCO2 list" "$OUT/hcanlz/ctl-pickco2"
+control "vocal indicator: a masked section is read as it is stored"      "$OUT/vdanlz/ctl-nomask"
+control "vocal indicator: the mask bit is kept in the hop"              "$OUT/vdanlz/ctl-hopbit"
+control "vocal indicator: a count that disagrees with the section is read" "$OUT/vdanlz/ctl-count"
+control "vocal indicator: a level above 4 is drawn"                     "$OUT/vdanlz/ctl-level"
+control "vocal indicator: a column shows its last frame, not its strongest" "$OUT/vdanlz/ctl-colmax"
+control "vocal indicator: the waveform strip ignores where the playhead is" "$OUT/vdanlz/ctl-wavedx"
+control "export folder: the first mount of a mount point counts"   "$OUT/pioneerdir/ctl-first"
+control "vocal source: rekordbox over the stems"                    "$OUT/vdanlz/ctl-rbfirst"
+control "vocal source: no rekordbox without stems"                  "$OUT/vdanlz/ctl-norb"
+control "vocal stems: level from single peaks, no fade"              "$OUT/vdanlz/ctl-stempeak"
+control "vocal stems: the other stem is ignored"                   "$OUT/vdanlz/ctl-stemother"
+control "vocal stems: no floor"                                    "$OUT/vdanlz/ctl-stemfloor"
+control "vocal stems: short runs kept"                             "$OUT/vdanlz/ctl-stemrun"
+control "vocal stems: gaps stay open"                              "$OUT/vdanlz/ctl-stemgap"
+control "stems path: a tag edit rejects the stems"                 "$OUT/stemsrc/ctl-exact"
+control "stems path: any size change passes"                       "$OUT/stemsrc/ctl-any"
+control "stems path: only a growth checked"                        "$OUT/stemsrc/ctl-grow"
+control "export folder: any filesystem starting hfsplus is HFS+"   "$OUT/pioneerdir/ctl-fsname"
+control "export folder: a mount point that only starts alike matches" "$OUT/pioneerdir/ctl-mplen"
+control "export folder: a path under .PIONEER is not cut"           "$OUT/pioneerdir/ctl-nodot"
+control "export folder: a stored /PIONEER/ path read as written on HFS+" "$OUT/pioneerdir/ctl-stored"
 control "worker order: hot cues wait for every playlist row"       "$OUT/smorder/ctl-phlast"
 control "worker order: a playlist scan's step skips the hot cues"     "$OUT/smorder/ctl-stepnohc"
 control "worker order: the oldest hot cue request first"             "$OUT/smorder/ctl-fifo"
@@ -4921,8 +5103,13 @@ control "registered rows: a child under an official row"   "$OUT/rows/ctl-parent
 control "registered rows: the icon not copied"            "$OUT/rows/ctl-iconref/t"
 control "registered rows: the icon never drawn"           "$OUT/rows/ctl-icondraw/t"
 control "registered rows: a stopped mod's rows are not retired" "$OUT/rows/ctl-retire/t"
+control "registered rows: a stopped mod's rows are not revived"  "$OUT/rows/ctl-revive/t"
 control "Mod Menu keys: a key renamed in features.def only"  "$OUT/keys/ctl/t" "$KEYS_MD"
 control "trackgen: eject does not bump the generation"      "$OUT/trackgen/ctl-eject"
+control "stem control: the poll overwrites a deck handed over" "$OUT/stemctl/ctl-overwrite"
+control "stem control: a toggle raises no evict edge" "$OUT/stemctl/ctl-noedge"
+control "stem control: the engaged bit alone taken as a toggle" "$OUT/stemctl/ctl-engaged"
+control "stem control: the master polled after the handover" "$OUT/stemctl/ctl-master"
 control "trackgen: bump after the curtrack publish"         "$OUT/trackgen/ctl-order"
 control "trackgen: no stems base skips the identity"       "$OUT/trackgen/ctl-nobase"
 control "trackgen: no load once a base turns up"           "$OUT/trackgen/ctl-deferred"

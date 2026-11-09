@@ -24,7 +24,9 @@
 typedef struct {
     char id[33];
     int state, hooks_ok, any, nhooks;
+    int sticky;
 } cm_mod;
+static int cm_running(const cm_mod *c) { return __atomic_load_n(&c->state, __ATOMIC_ACQUIRE) == AZCM_LOADED; }
 static cm_mod g_cm[1] = {{"mod-a", AZCM_LOADED, 1, 0, 0}};
 static int g_cm_loading = -1;
 static pthread_mutex_t g_cm_mu = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
@@ -36,6 +38,7 @@ static int cm_called_by(cm_mod *c, uintptr_t a) {
     (void) c;
     return a == 0 || a == g_mod_fn;
 }
+#define CM_OUTSIDE_CODE "called from outside the mod's code"
 static void cm_logf(cm_mod *c, int force, const char *fmt, ...) { (void) c, (void) force, (void) fmt; }
 
 /* the core's slot swap: unlock the page, publish the original, then the slot, lock it again */

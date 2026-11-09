@@ -437,8 +437,9 @@ starts "No internet" (refresh) or "Could not download <name>: no internet connec
 (install).
 
 The Mod Menu treats `done` after `install` or `remove` as "what loads has changed" and offers
-Reload; after `enable` or `disable` it shows the pending state ("Enabled after Reload.")
-until the next start.
+Reload; after `enable` or `disable` it first asks the core to make the change now
+([Turning a mod on or off without a reload](#turning-a-mod-on-or-off-without-a-reload)). When
+the core cannot, it shows the pending state ("Enabled after Reload.") until the next start.
 
 ### The request file
 
@@ -567,7 +568,7 @@ order:
 | Request | Does |
 |---|---|
 | `remove` | renames `<id>/` to `.<id>.old/`, removes its `community-mods.<id>` key, renames the copy to `.<id>.del/` and deletes it, then drops the id from the approved list. Its `data/` goes with it. Message: "<name> removed from the USB." |
-| `enable`, `disable` | set `community-mods.<id>` to `on` or `off`. Message: "<name> turns on after Reload." / "<name> turns off after Reload." |
+| `enable`, `disable` | set `community-mods.<id>` to `on` or `off`. Message: "<name> turns on after Reload." / "<name> turns off after Reload." (not shown when the core makes the change now) |
 | `addrepo` | refuses `http://` and a 33rd repository, says so when the repository is already present, appends the typed text to `repos.txt`, and refreshes |
 | `delrepo` | removes every line of `repos.txt` that normalizes to the same address ("<repository> is not in your repositories" when none does). Mods installed from that repository stay installed |
 
@@ -779,7 +780,7 @@ stays mapped and is never called again.
 
 | Condition | Logged refusal |
 |---|---|
-| called from inside the mod's own code (the return address lies in the mod's mapping), so a mod cannot claim in another mod's name | called with this mod's id from outside its code |
+| called from inside the mod's own code (the return address lies in the mod's mapping), so a mod cannot claim in another mod's name | called with this mod's id from outside its code (or as the last call of a callback: build with -fno-optimize-sibling-calls) |
 | called while the core runs that mod's `init` | call it from init() |
 | its manifest says `"hooks": true` and its firmware is not `any` | azmod.json does not declare "hooks": true / a mod for "any" firmware may not patch code |
 | the address lies inside EP147's executable range | not inside EP147's code |
@@ -908,6 +909,34 @@ At each start with enabled mods and community mods on, before loading, in this o
 A crashing mod therefore costs at most two short restarts, and the start quarantine trips
 before the loader's [crash-loop guard](USB-STICK.md#the-crash-loop-guard), which would turn
 the official mods off as well.
+
+### Turning a mod on or off without a reload
+
+A mod whose descriptor sets `stop` (`az_mod_v1.stop`, checked with `AZ_MOD_HAS_STOP`) is
+turned off and on by `enable` and `disable` while the deck runs. The core
+(`azcm_live_set`, UI thread) first writes the stage as the loader would from `azmods.cfg`
+(`<id>/<id>.off` and the sorted `enabled` list), so a restart without a re-mirror agrees.
+
+Off, only for a running mod that has `stop` and used nothing that lasts until the next start
+(no `"hooks": true`, no claimed hook or vtable slot, no surface, X window, audio tap or
+handoff). The core sets the mod's state first; every call from another thread (on_frame, frame
+and touch filters) goes through `cm_enter`, which counts it, so the core then waits up to
+500 ms for the calls already inside the mod to return. Then it calls `stop()` (with the
+`.initing` marker written, so a stop that freezes or crashes EP147 suspends the mod), hides its
+rows, retires its filters and deck listeners, drops its page, stops the programs it launched and
+waits up to 1 s for the threads it started through `thread_start` to end. A call that does not
+return, or a thread that does not end, leaves the mod off with `stop()` skipped or its threads
+logged, and it can be turned on again only after a reload. The library is never unloaded.
+
+On, only for a mod shown as Disabled. One stopped live earlier this start runs `init()` again,
+if its staged `.so` still has the checked and approved sha256. One that was off at the start
+goes through the whole start check now; it waits for a reload instead when its manifest says
+`"hooks": true` or its descriptor has no `stop`. Registrations made again reuse the mod's old
+slots: the same row key revives its row (handle and value kept), a frame filter on the same
+buses and a touch filter reuse theirs.
+
+A mod installed or updated this start is never turned on live: the stage holds what loaded at
+the start until the Reload mirrors the USB again.
 
 ### The reload exemption
 

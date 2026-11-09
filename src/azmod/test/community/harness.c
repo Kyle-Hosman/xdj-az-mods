@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -173,6 +174,19 @@ static int anyloaded_cmd(int argc, char **argv) {
  * covers every page size), never called. */
 __attribute__((noinline, aligned(65536))) static void tagmp_victim(void) { __asm__ volatile(".skip 65536"); }
 
+int az_live_probe[4]; /* the MOD_LIVE test mod's counters: inits, stops, calls outside init..stop, filter calls */
+static int g_live_stress_run;
+static long g_live_stress_frames;
+static void *live_stress_bus(void *a) {   /* the bus thread: on_frame and the frame filters, non-stop */
+    (void) a;
+    while (__atomic_load_n(&g_live_stress_run, __ATOMIC_ACQUIRE)) {
+        unsigned char fr[128] = {0};
+        community_frame(AZ_BUS_ERP_LED, fr, 0x78);
+        sdk_filter_run(AZ_BUS_ERP_LED, fr, 0x78);
+        __atomic_add_fetch(&g_live_stress_frames, 1, __ATOMIC_RELAXED);
+    }
+    return NULL;
+}
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "usage\n");
@@ -286,6 +300,50 @@ int main(int argc, char **argv) {
         int in_paint = g_headers;
         for (g_fake_now = 1; g_fake_now <= 1000; g_fake_now += 10) community_tick();
         printf("PAINT painted=%d in_paint=%d after_ticks=%d\n", painted, in_paint, g_headers - in_paint);
+        return 0;
+    }
+    if (argc > 4 && !strcmp(argv[2], "live")) {           /* the DJ turns mod argv[3] off/on: argv[4] = "off,on,..." */
+        cm_mod *c = cm_find(argv[3]);
+        char ops[64];
+        snprintf(ops, sizeof ops, "%s", argv[4]);
+        for (char *op = strtok(ops, ","); op; op = strtok(NULL, ",")) {
+            int rc = azcm_live_set(argv[3], !strcmp(op, "on"));
+            unsigned char fr[128] = {0};
+            int ran = community_frame(AZ_BUS_ERP_LED, fr, 0x78);
+            sdk_filter_run(AZ_BUS_ERP_LED, fr, 0x78);
+            int *inits = &az_live_probe[0], *stops = &az_live_probe[1], *filt = &az_live_probe[3];
+            char op_off[200];
+            snprintf(op_off, sizeof op_off, CM_STAGE "/%s/%s.off", argv[3], argv[3]);
+            char en[256] = {0};
+            FILE *ef = fopen(CM_STAGE "/enabled", "re");
+            if (ef) {
+                size_t k = fread(en, 1, sizeof en - 1, ef);
+                en[k] = 0;
+                fclose(ef);
+                for (char *q = en; *q; q++)
+                    if (*q == '\n') *q = ' ';
+            }
+            printf("LIVESET %s rc=%d state=%d byte0=%d ran=%d inits=%d stops=%d filtered=%d filters=%d off=%d enabled=[%s] dirty=%d reason=%s\n", op, rc,
+                   c ? c->state : -1, fr[0], ran, inits ? *inits : -1, stops ? *stops : -1, filt ? *filt : -1,
+                   g_sdk_ff_n, access(op_off, F_OK) == 0, en, c ? c->dirty : -1, c ? c->reason : "");
+        }
+        return 0;
+    }
+    if (argc > 4 && !strcmp(argv[2], "livestress")) {     /* the bus thread runs frames while the DJ turns it off and on */
+        cm_mod *c = cm_find(argv[3]);
+        int n = atoi(argv[4]), bad = 0;
+        pthread_t t;
+        __atomic_store_n(&g_live_stress_run, 1, __ATOMIC_RELEASE);
+        pthread_create(&t, NULL, live_stress_bus, NULL);
+        for (int i = 0; i < n; i++) {
+            if (azcm_live_set(argv[3], 0) != 1) bad++;
+            if (azcm_live_set(argv[3], 1) != 1) bad++;
+        }
+        __atomic_store_n(&g_live_stress_run, 0, __ATOMIC_RELEASE);
+        pthread_join(t, NULL);
+        int *ov = &az_live_probe[2], *filt = &az_live_probe[3];
+        printf("STRESS bad=%d overlap=%d filtered=%d frames=%ld filters=%d state=%d\n", bad, ov ? *ov : -1, filt ? *filt : -1,
+               __atomic_load_n(&g_live_stress_frames, __ATOMIC_RELAXED), g_sdk_ff_n, c ? c->state : -1);
         return 0;
     }
     if (argc > 2 && !strcmp(argv[2], "selfcrash")) {      /* a fault in "EP147", not in a mod */

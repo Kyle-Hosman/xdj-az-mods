@@ -766,9 +766,8 @@ static int cp_copy_track(struct cp_trk *t, FILE *lg) {
         for (int tries = 0; tries < 64; tries++) {
             int clash = 0;
             for (int e = 0; e < 3 && !clash; e++) {
-                snprintf(s, sizeof s, "%s%.*s%s", g_cp.src_mount, (int) (L - 3), src, ext[e]);
-                snprintf(d, sizeof d, "%s%.*s%s", g_cp.dst_mount, (int) (strlen(dpath) - 3), dpath,
-                         ext[e]);
+                pd_file(s, sizeof s, g_cp.src_mount, src, 3, ext[e]); /* PIONEER/ is .PIONEER/ on */
+                pd_file(d, sizeof d, g_cp.dst_mount, dpath, 3, ext[e]); /* an HFS+ stick */
                 struct stat ds;
                 if (stat(d, &ds) == 0 && !cp_same_bytes(s, d))
                     clash = 1;
@@ -792,10 +791,9 @@ static int cp_copy_track(struct cp_trk *t, FILE *lg) {
             if (lg)
                 fprintf(lg, "anlz %s: taken by another track on the target -> %s\n", src, dpath);
         }
-        size_t DL = strlen(dpath);
         for (int e = 0; e < 3; e++) {
-            snprintf(s, sizeof s, "%s%.*s%s", g_cp.src_mount, (int) (L - 3), src, ext[e]);
-            snprintf(d, sizeof d, "%s%.*s%s", g_cp.dst_mount, (int) (DL - 3), dpath, ext[e]);
+            pd_file(s, sizeof s, g_cp.src_mount, src, 3, ext[e]);
+            pd_file(d, sizeof d, g_cp.dst_mount, dpath, 3, ext[e]);
             struct stat ds;
             int r = stat(d, &ds) == 0 ? (cp_same_bytes(s, d) ? 0 : -2) : cp_file(s, d);
             if (lg)
@@ -3176,7 +3174,7 @@ static void ls_service(void *server) {
     if (!own_q(svc + INFOUPD_CACHE, &cache) || !cache)
         return;
     const char *dbp = g_sq_db_filename((void *) conn, "main");
-    const char *cut = dbp ? strstr(dbp, "/PIONEER/rekordbox/") : 0;
+    const char *cut = dbp ? pd_cut(dbp, "rekordbox/") : 0;
     if (!cut)
         return;
     char dir[600];

@@ -29,6 +29,7 @@ int azcm_row_target(const char *owner, const az_screen_v1 *row_scr);
 void azcm_resume(void);
 void azcm_flush_settings(void);   /* pending mod settings to p7 now (reload, leaving a mod's page) */
 void azcm_reload_requested(void); /* a Mod Menu reload: flush settings; this start counts as healthy */
+int azcm_live_set(const char *id, int on); /* the DJ turned a mod on/off: 1 = done now, 0 = after a reload */
 void azcm_unsuspend(const char *id);   /* a mod that crashed the deck: load it again next start */
 void azcm_set_all_off(int off);
 int  azcm_allow(int i);   /* an AZCM_NEW mod: approve the .so this start hashed; 0 = written */

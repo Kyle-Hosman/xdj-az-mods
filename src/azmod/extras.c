@@ -375,13 +375,22 @@ static int ht_title(void *self, void *str) {
  * Title's per-frame step (kt_title: ages the key's copy, repaints the row when what it shows
  * changes) and Hide Track Title's (ht_title: the tap, the eye, the swap). */
 static void kt_title(void *self);
+static void vx_title(uintptr_t panel, int d);
+/* Vocal Indicator's per-frame step: the deck and panel of this title (vocal_indicator.c vx_title) */
+static void vx_title_of(void *self) {
+    int d = ht_deck((uintptr_t) self);
+    if (d >= 0)
+        vx_title(*(volatile uintptr_t *) ((char *) self + HT_COMP_OFF + 0x18), d);
+}
 static void ht_hook2(void *self, void *str) {
     kt_title(self);
+    vx_title_of(self);
     int hide = ht_title(self, str); /* always: it also draws the eye and takes the tap */
     g_ht_orig2(self, hide && ht_empty_ok() ? (void *) &g_ht_empty : str);
 }
 static void ht_hook4(void *self, void *str) {
     kt_title(self);
+    vx_title_of(self);
     int hide = ht_title(self, str);
     g_ht_orig4(self, hide && ht_empty_ok() ? (void *) &g_ht_empty : str);
 }
@@ -817,6 +826,7 @@ static int ht_eye(void *g, int d, const int row[4], const int bar[3]) {
  * behind its own switch only (kt_plan_for): the eye with Hide Track Title on, the key with Key
  * in Track Title on, left of the eye when both show. With Hide Track Title off the key takes
  * the eye's place at the row's right end. */
+static void vx_paint(void *g, uintptr_t panel, int d); /* vocal_indicator.c */
 static void kt_paint(void *g, int d, const int row[4], const int bar[3], uintptr_t ti, int eye_left);
 static void ht_paintover(void *comp, void *g) {
     if (!g || !ht_ptr_ok((uintptr_t) comp))
@@ -832,6 +842,7 @@ static void ht_paintover(void *comp, void *g) {
     int d = *(volatile int *) (full + HT_DECK_OFF), row[4], bar[3];
     if (d < 0 || d >= 4)
         return;
+    vx_paint(g, (uintptr_t) comp, d); /* its own switch, its own band */
     uintptr_t ti = 0;
     int have_row = ht_row_ex((uintptr_t) comp, row, &ti, bar);
     int ht = ht_on(), kt = kt_on();
@@ -1848,6 +1859,8 @@ static void ci_key_tap(uintptr_t v, int compact) {
         return;
     }
 }
+/* The 4 DECK fields sit in rows a switch chose: only a tick with all four showing puts them back. */
+static int g_pl_fields_placed;
 static void pl_tick4(uintptr_t v, int mode) {
     int on4 = mode == 2 && ht_ptr_ok(*(volatile uintptr_t *) (v + 0x18)); /* 4 DECK, on screen */
     int meter = on4 && pm_on(); /* the band above the lanes */
@@ -1910,6 +1923,8 @@ static void pl_tick4(uintptr_t v, int mode) {
                 pl_lane(fw, 0, 0);
         }
     }
+    if (nf == 4)
+        g_pl_fields_placed = pm_on() || ci_on() || pl_order() != 0;
     for (int d = 0; nf == 4 && d < 4; d++) {
         pl_bounds(fws[d], *(volatile int *) (fws[d] + 0x20), wv[1 + pl_lane_of(d)],
                   *(volatile int *) (fws[d] + 0x28), wv[0]);
@@ -1934,6 +1949,23 @@ static void pl_tick4(uintptr_t v, int mode) {
     }
     g_pl_active4 = meter;
 }
+/* Phase Meter, Compact Track Info and 4 DECK Order all off, and everything they moved back at its
+ * stock place: nothing for this tick to do. The ticks after a switch goes off still run: the
+ * restores happen there. */
+static int pl_nothing_to_do(void) {
+    static unsigned settled; /* ticks since the last time anything was on, or moved */
+    if (pm_on() || ci_on() || pl_order() != 0 || g_pl_active || g_pl_active4 || g_ci.in ||
+        g_pl_fields_placed) {
+        settled = 0;
+        return 0;
+    }
+    for (int i = 0; i < PL_NMOVED; i++)
+        if (g_pl_moved[i].c) {
+            settled = 0;
+            return 0;
+        }
+    return settled >= 8 || (settled++, 0);
+}
 static void pl_tick(void) {
     uintptr_t v = g_pl_view;
     if (!pl_view_ok(v)) {
@@ -1943,6 +1975,8 @@ static void pl_tick(void) {
     int mode = *(volatile int *) (v + PL_MODE);
     if (mode >= 0 && mode <= 2)
         __atomic_store_n(&g_wv_mode, mode, __ATOMIC_RELAXED);
+    if (pl_nothing_to_do())
+        return;
     pl_tick4(v, mode);
     int want = pm_on() && (mode == 0 || mode == 1); /* 2 DECK and 2/4 DECK */
     volatile int *t = (volatile int *) (v + 0x190);
@@ -2311,6 +2345,9 @@ static void pm_tick(void) {
     } /* live (wref) but no longer the view painted: forget it */
     for (int i = 0; i < g_pm_nband && i < 4; i++) {
         int rect[4] = {g_pm_band[i][0], g_pm_band[i][1], g_pm_band[i][2], g_pm_band[i][3]};
+        /* The X driver sends a rotated copy longer than 16:1 to the CPU instead of the RGA. */
+        if (rect[2] > 16 * rect[3])
+            rect[3] = (rect[2] + 15) / 16;
         ((void (*)(void *, const int *)) PM_REPAINT_AREA)((void *) view, rect);
     }
 }
@@ -2320,9 +2357,11 @@ static void pm_tick(void) {
 #define PM_VIEW_VT EP_29e9790
 #define PM_VIEW_POC EP_21c81c0
 static void (*g_pm_opoc)(void *, void *);
+#include "vocal_indicator.c" /* Vocal Indicator: the deck panels' hook and this view's */
 static void pm_poc_hook(void *self, void *g) {
     g_pm_opoc(self, g);
     pm_paint((long) self, (long) g);
+    vx_wave_paint((uintptr_t) self, g); /* its own switch and its own lanes */
 }
 static void install_phasemeter(void) {
     uintptr_t cur = 0;

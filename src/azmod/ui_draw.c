@@ -550,6 +550,21 @@ static void draw_item_icon_raw(const azmod_fb *fb, int x, int y, int sz, int ite
         aa_icon(fb, x, y, sz, sh, 4, c);
         break;
     }
+    case AZF_VOCAL_INDICATOR: { /* a row of dashes over a waveform (Vocal Indicator) */
+        float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f, d = Y + S * .26f;
+        struct aa_shape sh[8] = {
+            {0, X + S * .10f, d, X + S * .28f, d, w},
+            {0, X + S * .41f, d, X + S * .59f, d, w},
+            {0, X + S * .72f, d, X + S * .90f, d, w},
+            {0, X + S * .20f, Y + S * .56f, X + S * .20f, Y + S * .74f, w},
+            {0, X + S * .35f, Y + S * .46f, X + S * .35f, Y + S * .84f, w},
+            {0, X + S * .50f, Y + S * .54f, X + S * .50f, Y + S * .76f, w},
+            {0, X + S * .65f, Y + S * .42f, X + S * .65f, Y + S * .88f, w},
+            {0, X + S * .80f, Y + S * .56f, X + S * .80f, Y + S * .74f, w},
+        };
+        aa_icon(fb, x, y, sz, sh, 8, c);
+        break;
+    }
     case AZF_PHASE_METER: { /* two rulers with ticks, offset (Phase Meter) */
         float S = (float) sz, X = (float) x, Y = (float) y, w = S * 0.05f;
         float l = X + S * .10f, r = X + S * .90f, ya = Y + S * .36f, yb = Y + S * .68f,

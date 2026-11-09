@@ -20,3 +20,4 @@ static int cm_row_lookup(const char *key) {
     return -1;
 }
 static void sdk_rows_tick(void) {}
+static void sdk_rows_forget(cm_mod *c) { (void) c; }

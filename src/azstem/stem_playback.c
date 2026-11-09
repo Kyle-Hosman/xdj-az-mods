@@ -10,6 +10,9 @@
  * mapping. A vtable check alone passes a reused allocation: deck B's new FGPR
  * landing at deck A's freed address would make A's mapping name B's object. */
 static _Atomic unsigned g_deck_trackgen[NDECK];
+/* The content id of the track the deck's stems load is for, 0 = none or unknown. Cleared on every
+ * track change, set when its load starts, so an envelope is never taken for a newer track. */
+static _Atomic unsigned g_env_cid[NDECK];
 static const int STEM_SLOT[NDECK] = {
     0, 1, 2, 3};                 /* audio slots (deck_slot) for Deck 1..4 */
 static _Atomic int g_enable = 1; /* master on/off (azstem.enable); 0 = all decks pass through */
@@ -33,7 +36,6 @@ static deck_stems g_dk[NDECK];
 #define OFS_DEC 16       /* coarse-search decimation */
 #define OFS_MINCORR 0.80 /* fine peak needed to adopt a lag */
 #define OFS_MARGIN 0.10  /* ... and its lead over the runner-up */
-#define OFS_TRIES 6
 #define NOSTEMOFS_PATH "/home/root/settings/azstem.nostemofs" /* escape hatch: never apply */
 enum {
     OFS_IDLE,
@@ -421,19 +423,19 @@ static void advance_stem_frames(int deck) {
 }
 
 /* Progressive decode of one stem into the deck's live buffer: at 44100, decode
- * in 0.5 s chunks, mlock and expose each as it lands. Other rates fall back to
- * the whole-file resampling decoder. On failure the slot leaves g_stem_present
- * so it stops gating the min. Off-RT. */
+ * in 0.5 s chunks, mlock and expose each as it lands. Other rates fall back to the
+ * whole-file resampling decoder. On failure the slot leaves g_stem_present so it
+ * stops gating the min. Takes ownership of v, the open stream (NULL = it did not
+ * open). Off-RT. */
 #define PROG_CHUNK (AZ_EP147_RATE / 2) /* 0.5 s */
 typedef struct {
     int deck;
     int slot;
     char path[1600];
+    stb_vorbis *v;
 } pjob_t;
-static void decode_stem_progressive(int deck, int slot, const char *path) {
+static void decode_stem_progressive(int deck, int slot, const char *path, stb_vorbis *v) {
     deck_stems *dk = &g_dk[deck];
-    int err = 0;
-    stb_vorbis *v = stb_vorbis_open_filename(path, &err, NULL);
     if (!v)
         goto fail;
     stb_vorbis_info info = stb_vorbis_get_info(v);
@@ -488,8 +490,9 @@ static void decode_stem_progressive(int deck, int slot, const char *path) {
     __sync_synchronize();
     dk->stem[slot] = buf; /* stem_frames still 0 -> RT ignores it */
 
-    float *tmp = malloc((size_t) PROG_CHUNK * (size_t) ch * sizeof(float));
-    if (!tmp) {
+    /* Stereo, the usual case, decodes straight into buf; only other layouts need a copy. */
+    float *tmp = ch == 2 ? NULL : malloc((size_t) PROG_CHUNK * (size_t) ch * sizeof(float));
+    if (ch != 2 && !tmp) {
         /* buf is already live in dk->stem[slot]: NULL it before dropping the slot,
          * or the RT hook sums garbage once the other stems open the gate. */
         dk->stem[slot] = NULL;
@@ -504,10 +507,11 @@ static void decode_stem_progressive(int deck, int slot, const char *path) {
         long want = cap - done;
         if (want > PROG_CHUNK)
             want = PROG_CHUNK;
-        int got = stb_vorbis_get_samples_float_interleaved(v, ch, tmp, (int) (want * (long) ch));
+        int got = stb_vorbis_get_samples_float_interleaved(v, ch, ch == 2 ? &buf[done * 2] : tmp,
+                                                           (int) (want * (long) ch));
         if (got <= 0)
             break;
-        for (long i = 0; i < got; i++) {
+        for (long i = 0; ch != 2 && i < got; i++) {
             float L, R;
             if (ch == 1) {
                 L = R = tmp[i];
@@ -547,7 +551,7 @@ static void *dth_prog(void *arg) {
      * a load decodes every stem at once, and at nice 0 they took most of the free cores
      * from it for the whole decode. Decoding still runs well ahead of the playhead. */
     setpriority(PRIO_PROCESS, (id_t) syscall(SYS_gettid), 10);
-    decode_stem_progressive(j->deck, j->slot, j->path);
+    decode_stem_progressive(j->deck, j->slot, j->path, j->v);
     return NULL;
 }
 
@@ -718,8 +722,9 @@ static int source_fp(const char *q, unsigned long long *fp) {
  * different folders share a key, so the name alone cannot tell their stems
  * apart. AZ-MODS writes <folder>/source.json:
  *   {"file": "<path relative to the stick>", "size": <bytes>, "fp": "fnv1a64:<hex>", ...}
- * Returns  1  made from `src`: same path (ASCII case ignored) and size; else the
- *             fingerprint decides when present (equal = same audio at any path);
+ * Returns  1  made from `src`: same path (ASCII case ignored) and the same size give or take a
+ *             tag edit (stem_source_rule.h); else the fingerprint decides when present
+ *             (equal = same audio at any path);
  *             else (no "fp") same size or same path.
  *          0  unknown: no source.json, no usable field, or `src` unreadable.
  *             Loads by name.
@@ -770,7 +775,7 @@ static int stem_folder_identity(const char *folder, srcid_t *src) {
         same_path =
             sl > fl && src->path[sl - fl - 1] == '/' && !strcasecmp(src->path + sl - fl, file);
     }
-    if (same_path && have_size && size == src->size)
+    if (same_path && have_size && stem_same_path_same_file(size, src->size))
         return 1;
     if (have_fp) {
         if (!file_fingerprint(src))
@@ -1086,6 +1091,43 @@ static long long mem_available_bytes(void) {
     fclose(f);
     return kb < 0 ? -1 : kb << 10;
 }
+/* What a load has been admitted for, and has not written yet, counts against the next
+ * load: MemAvailable still shows those malloc'd pages as free, and loads on several decks can
+ * overlap. A deck's own entry lives from its admission to the join of its decode threads. */
+static pthread_mutex_t g_mem_lock = PTHREAD_MUTEX_INITIALIZER;
+static long long g_mem_admitted[NDECK];
+/* 1 and the deck's need reserved when it fits above the floor. held = this deck's current
+ * stems, released before its decode. *avail and *pending report the decision. */
+static int stems_mem_admit(int deck, long long need, long long held, long long *avail,
+                           long long *pending) {
+    pthread_mutex_lock(&g_mem_lock);
+    long long inflight = 0;
+    for (int d = 0; d < NDECK; d++) {
+        if (d == deck || !g_mem_admitted[d])
+            continue;
+        long long left = g_mem_admitted[d];
+        for (int k = 0; k < NSTEM; k++)
+            left -= atomic_load_explicit(&g_stem_dec[d][k], memory_order_relaxed) * 2 *
+                    (long long) sizeof(float);
+        if (left > 0)
+            inflight += left;
+    }
+    long long a = mem_available_bytes();
+    int ok = a >= 0 && a + held - inflight - need >= ((long long) AZSTEM_MEM_FLOOR_MB << 20);
+    g_mem_admitted[deck] = ok ? need : 0;
+    /* the counts above must not read this deck's previous load as written */
+    for (int k = 0; ok && k < NSTEM; k++)
+        atomic_store_explicit(&g_stem_dec[deck][k], 0, memory_order_relaxed);
+    pthread_mutex_unlock(&g_mem_lock);
+    *avail = a;
+    *pending = inflight;
+    return ok;
+}
+static void stems_mem_done(int deck) {
+    pthread_mutex_lock(&g_mem_lock);
+    g_mem_admitted[deck] = 0;
+    pthread_mutex_unlock(&g_mem_lock);
+}
 /* Find the stems folder for this deck's track, check the memory floor, then
  * decode its .ogg stems progressively on parallel threads. Returns 1 when stems
  * are playable, 0 otherwise (the caller frees and shows no stems). Off-RT, on a
@@ -1139,13 +1181,14 @@ static int load_stems_ogg(int deck, const char *track, const char *src) {
     }
     closedir(fd);
 
-    /* Memory floor, checked before any allocation: decoded f32 stems are mlock'd
-     * (8 B/frame/stem), and four long tracks can exhaust a 3.85 GB deck. Not
+    /* Memory floor, checked before any allocation: decoded f32 stems take
+     * 8 B/frame/stem, mlock'd, and four long tracks can exhaust a 3.85 GB deck. Not
      * enough room -> the track plays without stems. This deck's current stems
-     * count as free (released before the decode). Two decks loading at once each
-     * see the other's untouched malloc pages as free; the floor is the margin. */
+     * count as free (released before the decode). The streams opened here go on to
+     * the decode threads. */
+    stb_vorbis *streams[NSTEM] = {NULL};
     {
-        long long need = 0, held = 0, avail = mem_available_bytes();
+        long long need = 0, held = 0, avail = 0, pending = 0;
         for (int k = 0; k < NSTEM; k++) {
             held += (long long) g_dk[deck].stem_bytes[k];
             if (!paths[k][0])
@@ -1158,13 +1201,17 @@ static int load_stems_ogg(int deck, const char *track, const char *src) {
             long long fr = stb_vorbis_stream_length_in_samples(v);
             if (in.sample_rate > 0 && in.sample_rate != AZ_EP147_RATE)
                 fr = fr * AZ_EP147_RATE / in.sample_rate;
-            stb_vorbis_close(v);
+            streams[k] = v;
             need += fr * 2 * (long long) sizeof(float);
         }
-        if (avail < 0 || avail + held - need < ((long long) AZSTEM_MEM_FLOOR_MB << 20)) {
-            logln("stems REFUSED d%d for '%s': need %lld MB, MemAvailable %lld MB (+%lld MB held), "
-                  "floor %d MB -- playing without stems",
-                  deck, track, need >> 20, avail >> 20, held >> 20, AZSTEM_MEM_FLOOR_MB);
+        if (!stems_mem_admit(deck, need, held, &avail, &pending)) {
+            for (int k = 0; k < NSTEM; k++)
+                if (streams[k])
+                    stb_vorbis_close(streams[k]);
+            logln("stems REFUSED d%d for '%s': need %lld MB, MemAvailable %lld MB (+%lld MB held, "
+                  "-%lld MB other loads), floor %d MB -- playing without stems",
+                  deck, track, need >> 20, avail >> 20, held >> 20, pending >> 20,
+                  AZSTEM_MEM_FLOOR_MB);
             return 0;
         }
     }
@@ -1207,6 +1254,7 @@ static int load_stems_ogg(int deck, const char *track, const char *src) {
     }
     atomic_store_explicit(&g_stem_present[deck], present, memory_order_relaxed);
     if (!present) {
+        stems_mem_done(deck);
         atomic_store_explicit(&g_stem_pending[deck], 0, memory_order_relaxed);
         publish_deck_file(deck, "avail", "0");
         logln("stems: no .ogg slots in '%s'", folder);
@@ -1224,9 +1272,10 @@ static int load_stems_ogg(int deck, const char *track, const char *src) {
                 continue;
             job[nth].deck = deck;
             job[nth].slot = k;
+            job[nth].v = streams[k];
             snprintf(job[nth].path, sizeof job[nth].path, "%s", paths[k]);
             if (az_thread_create(&th[nth], NULL, dth_prog, &job[nth]) != 0)
-                decode_stem_progressive(deck, k, paths[k]); /* thread exhausted: decode inline */
+                decode_stem_progressive(deck, k, paths[k], streams[k]); /* thread exhausted: inline */
             else
                 nth++;
         }
@@ -1234,6 +1283,7 @@ static int load_stems_ogg(int deck, const char *track, const char *src) {
         for (int i = 0; i < nth; i++)
             pthread_join(th[i], NULL);
     }
+    stems_mem_done(deck);
     t_dec = ms_now();
     for (int k = 0; k < NSTEM; k++)
         logln("ogg: decode slot %d -> %s frames=%ld", k, dk->stem[k] ? "ok" : "(none)",
@@ -1330,6 +1380,10 @@ static int publish_write(const char *path, const char *val) {
     }
     return 0;
 }
+/* What azmod would read from these files, for its tick without a file open per deck:
+ * azstem_avail and azstem_curtrack_seq. -1 = not published yet. */
+static _Atomic int g_avail_pub[NDECK] = {-1, -1, -1, -1};
+static _Atomic unsigned g_curtrack_seq[NDECK];
 /* Publish a per-deck control file (avail / curtrack). Failures are logged: on a
  * full settings partition a silent failure means azmod never sees the track
  * change and never resets the stem toggles. */
@@ -1345,6 +1399,8 @@ static void publish_deck_file(int deck, const char *stem, const char *val) {
     snprintf(line, sizeof line, "%s\n", val);
     if (publish_write(pth, line) != 0)
         logln("publish FAILED %s (disk full?)", pth);
+    if (!strcmp(stem, "curtrack")) /* after the rename: a reader that sees the bump sees the file */
+        atomic_fetch_add_explicit(&g_curtrack_seq[deck], 1, memory_order_release);
 }
 
 /* Publish the loaded file per deck to /tmp/azstem.cursrcN for deck-side tools
@@ -1441,6 +1497,7 @@ static int g_load_deferred[NDECK];
  * consumer keyed on the generation (azmod's stem toggle reset, the drum roll's grid, the
  * auto key-shift FGPR mapping) must see both, so both paths come through here. */
 static void deck_track_changed(int deck) {
+    atomic_store_explicit(&g_env_cid[deck], 0, memory_order_relaxed);
     atomic_fetch_add_explicit(&g_deck_trackgen[deck], 1, memory_order_relaxed);
 }
 static int lti_read(int deck, unsigned char id16[16], char *title, size_t tn, char *artist,
@@ -1469,6 +1526,7 @@ static void drop_stems(int deck) {
 }
 
 static int lti_native_path(int deck, char *out, size_t n); /* LoadedTrackInfo route, below */
+static unsigned lti_content_id(int deck);                 /* same route, 0 = unknown */
 /* Full path of the deck's file. Same authority rule as get_loaded_track_name:
  * when the native route is armed it is the only answer; empty = unknown. */
 static void loaded_track_path(int deck, char *out, size_t n) {
@@ -1488,6 +1546,7 @@ static void start_load(int deck, const char *tr) {
     j->deck = deck;
     snprintf(j->track, sizeof j->track, "%s", tr);
     loaded_track_path(deck, j->src, sizeof j->src);
+    atomic_store_explicit(&g_env_cid[deck], lti_content_id(deck), memory_order_release);
     atomic_store_explicit(&g_stem_loading[deck], 1, memory_order_relaxed);
     pthread_t th;
     if (az_thread_create(&th, NULL, loader_thread, j) == 0)

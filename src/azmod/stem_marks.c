@@ -678,7 +678,7 @@ static int sm_stick_usable(const char *mount, int ours) {
     if (w->others >= 0 && now - w->at < 250)
         return w->others > 0;
     char dbp[200];
-    snprintf(dbp, sizeof dbp, "%s/PIONEER/rekordbox/exportLibrary.db", mount);
+    snprintf(dbp, sizeof dbp, "%s/%s/rekordbox/exportLibrary.db", mount, pd_dir(mount));
     int n = sm_fds_on(dbp);
     if (n < 0)
         return 0; /* cannot tell whether EP147 still holds it: unknown, so leave the stick alone */
@@ -707,7 +707,7 @@ static void sm_db_release_unused(FILE *lg) {
 static int g_sm_dbpin; /* worker only: a playlist statement is stepping */
 static void *sm_db_for(const char *mount, FILE *lg) {
     char dbp[200], uri[240];
-    snprintf(dbp, sizeof dbp, "%s/PIONEER/rekordbox/exportLibrary.db", mount);
+    snprintf(dbp, sizeof dbp, "%s/%s/rekordbox/exportLibrary.db", mount, pd_dir(mount));
     long long sig = sm_file_sig(dbp);
     struct sm_db *d = 0, *freed = 0;
     for (int i = 0; i < SM_MOUNTS; i++) {
@@ -928,7 +928,9 @@ static long long sm_world_sig(void) {
         char p[300];
         s = s * 31 + sm_hash(de->d_name);
         /* the name is already in the signature; a path that does not fit is not read */
-        if (snprintf(p, sizeof p, "/media/usb/%s/PIONEER/rekordbox/exportLibrary.db", de->d_name) <
+        char mnt[280];
+        snprintf(mnt, sizeof mnt, "/media/usb/%s", de->d_name);
+        if (snprintf(p, sizeof p, "%s/%s/rekordbox/exportLibrary.db", mnt, pd_dir(mnt)) <
             (int) sizeof p)
             s = s * 31 + sm_file_sig(p);
         snprintf(p, sizeof p, "/media/usb/%s/STEMS", de->d_name);
@@ -999,6 +1001,7 @@ static void sm_serve(unsigned cid, unsigned h, unsigned media, const char *title
      * event a row that was evicted from a full queue may get */
     __atomic_store_n(&g_sm_dirty, 1, __ATOMIC_RELEASE);
 }
+static void vx_poll(void);
 /* Preview Hot Cues (preview_hotcues.c, included at the end) ride this worker */
 static int ph_queued(void);
 static int ph_serve_one(FILE *lg);
@@ -1089,6 +1092,7 @@ static void *sm_worker(void *arg) {
             }
         }
         sm_db_release_unused(lg);
+        vx_poll(); /* Vocal Indicator (vocal_indicator.c, included by extras.c) */
         sm_work_one(lg);
     }
     return 0;

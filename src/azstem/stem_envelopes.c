@@ -265,6 +265,44 @@ unsigned azstem_trackgen(int deck) {
         return 0;
     return atomic_load_explicit(&g_deck_trackgen[deck], memory_order_relaxed);
 }
+/* The value of azstem.avail<N> as last published: 0, 1, or -1 before the first publish. */
+int azstem_avail(int deck);
+int azstem_avail(int deck) {
+    if (deck < 0 || deck >= NDECK)
+        return -1;
+    return atomic_load_explicit(&g_avail_pub[deck], memory_order_acquire);
+}
+/* Bumped after each write of azstem.curtrack<N>: unchanged means the file is unchanged. */
+unsigned azstem_curtrack_seq(int deck);
+unsigned azstem_curtrack_seq(int deck) {
+    if (deck < 0 || deck >= NDECK)
+        return 0;
+    return atomic_load_explicit(&g_curtrack_seq[deck], memory_order_acquire);
+}
+/* The final envelope of deck's stems, only when they are the stems of track content_id: *env as
+ * azstem_wave's, *frames its length at AZ_EP147_RATE, *gen its generation (reread azstem_env_gen
+ * after copying: a change means the copy cannot be trusted). 1 = filled, 0 = no such envelope. */
+int azstem_track_env(int deck, unsigned content_id, const unsigned char **env, int *n, int *nstem,
+                     long *frames, int *rate, unsigned *gen);
+int azstem_track_env(int deck, unsigned content_id, const unsigned char **env, int *n, int *nstem,
+                     long *frames, int *rate, unsigned *gen) {
+    if (deck < 0 || deck >= NDECK || !content_id)
+        return 0;
+    *gen = atomic_load_explicit(&g_env_gen[deck], memory_order_acquire);
+    if (atomic_load_explicit(&g_env_cid[deck], memory_order_acquire) != content_id ||
+        !atomic_load_explicit(&g_env_ready[deck], memory_order_acquire) ||
+        !atomic_load_explicit(&g_env_final[deck], memory_order_acquire))
+        return 0;
+    long fr = g_env_frames[deck];
+    if (fr <= 0)
+        return 0;
+    *env = &g_env[deck][0][0];
+    *n = AZW_N;
+    *nstem = NSTEM;
+    *frames = fr;
+    *rate = AZ_EP147_RATE;
+    return 1;
+}
 int azstem_wave(int deck, const unsigned char **env, int *n, int *nstem, float *pos) {
     if (deck < 0 || deck >= NDECK)
         return 0;

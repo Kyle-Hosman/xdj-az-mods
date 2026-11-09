@@ -1037,6 +1037,7 @@ static inline float ofs_stem_mono(const deck_stems *dk, long long i) {
 typedef struct {
     long lag;
     double fine, coarse, second;
+    int whitened; /* the lead came from the second measurement */
 } ofs_res_t;
 static pthread_mutex_t g_ofs_corr_lock = PTHREAD_MUTEX_INITIALIZER;
 static inline float ofs_stem_mono_lim(const deck_stems *dk, long long i, long lim) {
@@ -1086,48 +1087,83 @@ static void ofs_correlate(const deck_stems *dk, long lim, const float *x, long l
             a += q[j];
         sd[k] = a;
     }
-    double xde = 0;
-    for (int k = 0; k < ND; k++)
-        xde += (double) xd[k] * xd[k];
     double best = -2, second = -2;
     int bl = 0;
     static double cc[2 * LD + 1];
-    for (int l = -LD; l <= LD; l++) {
-        /* orig[p] ~ stem[p - lag]  =>  xd[k] vs sd[k + LD - l] */
-        const float *sp = sd + LD - l;
-        float d0 = 0, d1 = 0, d2 = 0, d3 = 0, e0 = 0, e1 = 0, e2 = 0, e3 = 0;
-        for (int k = 0; k < ND; k += 4) {
-            d0 += xd[k] * sp[k];
-            e0 += sp[k] * sp[k];
-            d1 += xd[k + 1] * sp[k + 1];
-            e1 += sp[k + 1] * sp[k + 1];
-            d2 += xd[k + 2] * sp[k + 2];
-            e2 += sp[k + 2] * sp[k + 2];
-            d3 += xd[k + 3] * sp[k + 3];
-            e3 += sp[k + 3] * sp[k + 3];
+    r->whitened = 0;
+    /* Sustained bass correlates with itself at every period, so a correct peak can have no lead.
+     * When it has none, measure again on a second difference over two bins, which lifts whatever
+     * else is playing (a 700 Hz part gains over 100 times what a 40 Hz one does) and, peaking well
+     * below the bins' Nyquist, still correlates at a lag halfway between two bins. */
+    for (int whiten = 0; whiten < 2; whiten++) {
+        double xde = 0;
+        for (int k = 0; k < ND; k++)
+            xde += (double) xd[k] * xd[k];
+        double best0 = best, second0 = second;
+        int bl0 = bl;
+        if (whiten) {
+            double xdw = 0;
+            for (int k = ND - 1; k >= 4; k--) {
+                xd[k] = xd[k] - 2.f * xd[k - 2] + xd[k - 4];
+                xdw += (double) xd[k] * xd[k];
+            }
+            if (xdw <= 0)
+                break;
+            xd[0] = xd[1] = xd[2] = xd[3] = 0.f;
+            xde = xdw;
+            for (int k = NS - 1; k >= 4; k--)
+                sd[k] = sd[k] - 2.f * sd[k - 2] + sd[k - 4];
+            sd[0] = sd[1] = sd[2] = sd[3] = 0.f;
         }
-        double dot = (double) d0 + d1 + d2 + d3, se = (double) e0 + e1 + e2 + e3;
-        cc[l + LD] = (se > 0) ? dot / sqrt(xde * se) : 0;
-        if (cc[l + LD] > best) {
-            best = cc[l + LD];
-            bl = l;
+        best = -2;
+        second = -2;
+        bl = 0;
+        for (int l = -LD; l <= LD; l++) {
+            /* orig[p] ~ stem[p - lag]  =>  xd[k] vs sd[k + LD - l] */
+            const float *sp = sd + LD - l;
+            float d0 = 0, d1 = 0, d2 = 0, d3 = 0, e0 = 0, e1 = 0, e2 = 0, e3 = 0;
+            for (int k = 0; k < ND; k += 4) {
+                d0 += xd[k] * sp[k];
+                e0 += sp[k] * sp[k];
+                d1 += xd[k + 1] * sp[k + 1];
+                e1 += sp[k + 1] * sp[k + 1];
+                d2 += xd[k + 2] * sp[k + 2];
+                e2 += sp[k + 2] * sp[k + 2];
+                d3 += xd[k + 3] * sp[k + 3];
+                e3 += sp[k + 3] * sp[k + 3];
+            }
+            double dot = (double) d0 + d1 + d2 + d3, se = (double) e0 + e1 + e2 + e3;
+            cc[l + LD] = (se > 0) ? dot / sqrt(xde * se) : 0;
+            if (cc[l + LD] > best) {
+                best = cc[l + LD];
+                bl = l;
+            }
+        }
+        /* The runner-up is the best lag outside the peak's own lobe: the lags reached by
+         * walking down from the peak while the correlation keeps falling. Bass-heavy audio
+         * has a lobe many bins wide, and its shoulder is the same alignment, not a rival.
+         * A peak on the edge of the window may continue past it, so it has no lead. */
+        int lo = bl, hi = bl;
+        while (lo > -LD && cc[lo - 1 + LD] <= cc[lo + LD])
+            lo--;
+        while (hi < LD && cc[hi + 1 + LD] <= cc[hi + LD])
+            hi++;
+        if (bl == -LD || bl == LD)
+            second = best;
+        else
+            for (int l = -LD; l <= LD; l++)
+                if ((l < lo || l > hi) && cc[l + LD] > second)
+                    second = cc[l + LD];
+        if (best - second >= OFS_MARGIN) {
+            r->whitened = whiten;
+            break;
+        }
+        if (whiten) { /* no better: the first answer stands */
+            best = best0;
+            second = second0;
+            bl = bl0;
         }
     }
-    /* The runner-up is the best lag outside the peak's own lobe: the lags reached by
-     * walking down from the peak while the correlation keeps falling. Bass-heavy audio
-     * has a lobe many bins wide, and its shoulder is the same alignment, not a rival.
-     * A peak on the edge of the window may continue past it, so it has no lead. */
-    int lo = bl, hi = bl;
-    while (lo > -LD && cc[lo - 1 + LD] <= cc[lo + LD])
-        lo--;
-    while (hi < LD && cc[hi + 1 + LD] <= cc[hi + LD])
-        hi++;
-    if (bl == -LD || bl == LD)
-        second = best;
-    else
-        for (int l = -LD; l <= LD; l++)
-            if ((l < lo || l > hi) && cc[l + LD] > second)
-                second = cc[l + LD];
     /* fine: full rate around the coarse peak; stem[base + i - lag] = sw[i - lag + OFS_LAGMAX +
      * OFS_PAD]
      * (|lag| <= OFS_LAGMAX + 2*OFS_DEC <= OFS_LAGMAX + OFS_PAD keeps the index in range) */
@@ -1185,14 +1221,16 @@ static void ofs_tick(void) {
                 g_ofs_armed_epoch[d] = ep;
                 g_ofs_tries[d] = 0;
             }
-            if (g_ofs_tries[d] >= OFS_TRIES)
-                continue; /* unknown for this load: stays 0 */
             atomic_store_explicit(&g_ofs_base[d], -1, memory_order_relaxed);
             atomic_store_explicit(&g_ofs_next[d], 0, memory_order_relaxed);
             memset(g_ofs_cov[d], 0, OFS_N);
             g_ofs_armticks[d] = 0;
             atomic_store_explicit(&g_ofs_state[d], OFS_ARMED, memory_order_release);
             logln("STEMOFS d%d '%s': armed (try %d)", d, dk->loaded_track, g_ofs_tries[d] + 1);
+            continue;
+        }
+        if (st == OFS_DONE) { /* measure again: one MATCH says nothing about later in the track */
+            atomic_store_explicit(&g_ofs_state[d], OFS_IDLE, memory_order_release);
             continue;
         }
         if (st == OFS_ARMED && g_ofs_armed_epoch[d] == ep) {

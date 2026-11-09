@@ -59,8 +59,8 @@ typedef enum {
  * make those flags live. azmod's diagnostic logs go through azlog_open(), which writes
  * nothing unless /home/root/settings/azmod-logs.on existed at start. Not everything is
  * behind those two gates: a few plain access()/open() test hooks under /tmp remain in
- * release builds (fake temperature and CPU-frequency inputs, touch-simulation and
- * Themes test triggers), and azstem writes small status files to /tmp unconditionally.
+ * release builds (fake temperature and CPU-frequency inputs, touch-simulation test
+ * triggers), and azstem writes small status files to /tmp unconditionally.
  * Feature flags and ".off" kill switches are plain access() by design. */
 #ifdef AZMOD_PROBES
 #define AZ_PROBE_ON(p) (access((p), F_OK) == 0)

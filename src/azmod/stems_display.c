@@ -27,14 +27,23 @@
  */
 static int read_avail(azmod_state *s) {
     static const char *P[AZMOD_STEM_DECKS] = {AVAIL_PATH, AVAIL2_PATH, AVAIL3_PATH, AVAIL4_PATH};
+    static int (*avail_fn)(int deck); /* azstem_avail: the published value without the file */
+    {
+        static unsigned tries; /* azstem is preloaded after us: resolve late, cheaply */
+        if (!avail_fn && (tries++ & 63u) == 0)
+            *(void **) &avail_fn = dlsym(RTLD_DEFAULT, "azstem_avail");
+    }
     int changed = 0;
     for (int d = 0; d < AZMOD_STEM_DECKS; d++) {
-        FILE *f = fopen(P[d], "re");
-        int av = 0;
-        if (f) {
-            int c = fgetc(f);
-            av = (c == '1');
-            fclose(f);
+        int av = avail_fn ? avail_fn(d) : -1;
+        if (av < 0) {
+            FILE *f = fopen(P[d], "re");
+            av = 0;
+            if (f) {
+                int c = fgetc(f);
+                av = (c == '1');
+                fclose(f);
+            }
         }
         if (av != s->stems_available[d]) {
             s->stems_available[d] = av;
@@ -55,13 +64,25 @@ static int reset_stems_on_track_change(azmod_state *s) {
     static int primed[AZMOD_STEM_DECKS] = {0};
     static unsigned lastgen[AZMOD_STEM_DECKS];
     static int genok[AZMOD_STEM_DECKS]; /* lastgen was read with azstem_trackgen */
+    static unsigned (*seq_fn)(int deck); /* azstem_curtrack_seq */
+    static unsigned seq_val[AZMOD_STEM_DECKS];
+    static int seq_seen[AZMOD_STEM_DECKS]; /* seq_val[d] is what the last full pass of d saw */
     {
         static unsigned tries; /* azstem is preloaded after us: resolve late, cheaply */
-        if (!g_trackgen_fn && (tries++ & 63u) == 0)
+        if ((!g_trackgen_fn || !seq_fn) && (tries++ & 63u) == 0) {
             *(void **) &g_trackgen_fn = dlsym(RTLD_DEFAULT, "azstem_trackgen");
+            *(void **) &seq_fn = dlsym(RTLD_DEFAULT, "azstem_curtrack_seq");
+        }
     }
     int changed = 0;
     for (int d = 0; d < AZMOD_STEM_DECKS; d++) {
+        /* Nothing was published since the last read and no track change: the file is the same. */
+        unsigned seq = seq_fn ? seq_fn(d) : 0;
+        if (seq_fn && g_trackgen_fn && seq_seen[d] && seq == seq_val[d] &&
+            g_trackgen_fn(d) == lastgen[d])
+            continue;
+        seq_val[d] = seq; /* read before the file: a publish after this is seen next tick */
+        seq_seen[d] = 1;
         char cur[256] = {0};
         FILE *f = fopen(P[d], "re");
         if (!f)

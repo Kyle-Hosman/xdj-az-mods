@@ -100,6 +100,11 @@ int azcm_row_target(const char *owner, const az_screen_v1 *row_scr) {
 }
 void azcm_resume(void) {}
 void azcm_flush_settings(void) {}
+int azcm_live_set(const char *id, int on) {
+    (void) id;
+    (void) on;
+    return 0;
+}
 int azcm_confirm(const char *title, const char *text, const char *yes,
                  void (*fn)(int yes, void *user), void *user) {
     (void) title;

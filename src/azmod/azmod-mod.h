@@ -469,7 +469,22 @@ typedef struct az_mod_v1 {
      * later; the settings, file-folder and register_screen services are refused (they return
      * the default, or NULL / -1). May be NULL. */
     int  (*on_frame)(int bus, unsigned char *frame, int len);
+
+    /* Optional. Setting it says the mod can be turned off and on while the deck runs, without a
+     * reload. The core calls it on its UI thread when the DJ turns the mod off, after it has
+     * stopped calling everything else of the mod (tick, on_frame, filters, callbacks, pages,
+     * rows). Before returning, end every thread the mod started and undo whatever it changed
+     * outside the core's services; programs it launched are stopped by the core afterwards.
+     * Turning the mod on again calls init() again on the same library, so set your state up in
+     * init(), not in static initializers. A mod that claims hooks or vtable slots, creates
+     * surfaces, shows X windows, taps audio or hands off is not turned off live (the change
+     * waits for a reload and stop() is not called). Left NULL, or built with an older header,
+     * turning the mod on or off takes effect after a reload, as before. */
+    void (*stop)(void);
 } az_mod_v1;
+/* 1 = the descriptor has stop() (built with this header and set it) */
+#define AZ_MOD_HAS_STOP(m) \
+    ((size_t)(m)->size >= offsetof(az_mod_v1, stop) + sizeof((m)->stop) && (m)->stop)
 
 /* Export exactly this. Build with -fvisibility=hidden; this attribute keeps the one
  * required symbol visible so the core can find it. */

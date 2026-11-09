@@ -19,6 +19,7 @@ typedef struct {
     uintptr_t lo, hi;
     int state;
 } cm_mod;
+static int cm_running(const cm_mod *c) { return __atomic_load_n(&c->state, __ATOMIC_ACQUIRE) == AZCM_LOADED; }
 static cm_mod g_cm[2] = {{"mod-a", 0x1000, 0x2000, AZCM_LOADED}, {"mod-b", 0x3000, 0x4000, AZCM_LOADED}};
 static int g_cm_loading = -1, g_cm_on_ui = 1;
 static uintptr_t g_ra; /* the calling code's address, as CM_RA() would read it */

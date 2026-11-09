@@ -73,7 +73,7 @@ static int sdk_on_overlay(void) {
 }
 static int sdk_mod_live(int mod) {
     return mod == SDK_MOD_CORE || (mod >= 0 && mod < g_cm_n &&
-                                   (g_cm[mod].state == AZCM_LOADED || mod == g_cm_loading));
+                                   (cm_running(&g_cm[mod]) || mod == g_cm_loading));
 }
 /* The calling mod, refused (and logged once per service) unless it is this thread's. */
 static cm_mod *sdk_self(const char *id, uintptr_t ra, const char *what, int overlay_only) {
@@ -141,6 +141,7 @@ static az_surface *sdk_surface_create(const char *id, const az_surface_v1 *s) {
     cm_mod *c = sdk_self(id, CM_RA(), "surface_create", 1);
     if (!c)
         return NULL;
+    __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED); /* lasts until the next start: no live stop */
     int mod = (int) (c - g_cm);
     if (mod != g_cm_loading) {
         cm_logf(c, 1, "surface_create refused: only from init()");
@@ -330,6 +331,7 @@ static int sdk_xwin_show(const char *id, unsigned long xid, az_rect r, int on) {
     cm_mod *c = sdk_self(id, CM_RA(), "xwin_show", 1);
     if (!c || !xid)
         return -1;
+    __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED); /* lasts until the next start: no live stop */
     int mod = (int) (c - g_cm), noop;
     struct sdk_xw_ent t[SDK_XWIN_MAX];
     for (int i = 0; i < SDK_XWIN_MAX; i++)

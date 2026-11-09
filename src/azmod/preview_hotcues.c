@@ -138,8 +138,8 @@ static int ph_from_files(const char *mount, const char *adp, struct hc_cue *cues
     char p[700];
     int r = -1;
     size_t L = strlen(adp);
-    if (L > 4 && L + strlen(mount) < sizeof p && !strcasecmp(adp + L - 4, ".DAT")) {
-        snprintf(p, sizeof p, "%s%.*s.EXT", mount, (int) (L - 4), adp);
+    if (L > 4 && !strcasecmp(adp + L - 4, ".DAT") &&
+        pd_file(p, sizeof p, mount, adp, 4, ".EXT") < (int) sizeof p) {
         size_t n = 0;
         uint8_t *b = ph_read(p, &n);
         if (b) {
@@ -147,7 +147,7 @@ static int ph_from_files(const char *mount, const char *adp, struct hc_cue *cues
             free(b);
         }
     }
-    if (r < 0 && snprintf(p, sizeof p, "%s%s", mount, adp) < (int) sizeof p) {
+    if (r < 0 && pd_file(p, sizeof p, mount, adp, 0, "") < (int) sizeof p) {
         size_t n = 0;
         uint8_t *b = ph_read(p, &n);
         if (b) {

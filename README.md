@@ -225,6 +225,7 @@ Smaller tweaks, each with its own switch in the Mod Menu (most of them under
 | **Overlays** | Small readouts on the deck screen: FPS, CPU use and clock, RAM and temperature |
 | **Clock** | A clock in the status bar, with optional seconds. Tap it for a countdown timer |
 | **Key in Track Title** | Each deck's key at the end of its track title. Tap it for key shift |
+| **Vocal Indicator** | Where the vocals are, above each deck's overview waveform (tracks analyzed with vocal detection in rekordbox) |
 | **Camelot Keys** | Keys shown in Camelot notation in the track lists and the deck info |
 | **Preview Hot Cues** | Hot cue marks on the track list's waveform previews |
 | **Extended Lead-In** | Spin a track back up to 5 minutes before its start; BEAT JUMP back runs into it |
@@ -335,6 +336,11 @@ The AZ-MODS desktop app has a Community Mods tab that does the same from your co
   **New mod found: allow?** page. A mod whose code crashes the deck is switched off on
   the next start, and only that mod; if the deck keeps restarting right after starting
   community mods, none are loaded until you turn them back on in the Mod Menu.
+- **Paid mods:** AZ-MODS is free, and the Mod Index lists only mods that are free with
+  every feature. Mods that are sold, or that unlock features through a paid account or
+  subscription, are not listed and not supported: AZ-MODS offers no help with them, and
+  questions about them go to whoever sells them. Installing AZ-MODS is free and needs no
+  paid service; anyone charging for it is not part of this project.
 
 <br>
 
@@ -404,6 +410,10 @@ in [`NOTICE`](NOTICE).
 
 Community mods run inside the AZ-MODS core, so they are GPL-3.0 as well; the
 [AZ-MODS SDK](https://github.com/Kyle-Hosman/az-mods-sdk) has the details.
+
+The GPL-3.0 covers the code, not the AZ-MODS name or logo. Neither may be used to sell
+or promote a paid product, service or installation, or to suggest that AZ-MODS endorses
+one.
 
 <br>
 

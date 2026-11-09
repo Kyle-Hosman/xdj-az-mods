@@ -363,7 +363,7 @@ static int b2_usable(struct b2_db *d, const char *dbp) {
 }
 static void *b2_db_for(const char *mount) {
     char dbp[200], uri[240];
-    if (snprintf(dbp, sizeof dbp, "%s/PIONEER/rekordbox/exportLibrary.db", mount) >= (int) sizeof dbp)
+    if (snprintf(dbp, sizeof dbp, "%s/%s/rekordbox/exportLibrary.db", mount, pd_dir(mount)) >= (int) sizeof dbp)
         return 0;
     struct b2_db *d = 0;
     for (int i = 0; i < B2_DB_MAX && !d; i++)
@@ -410,7 +410,7 @@ static void b2_db_release(void) {
         char dbp[240];
         if (!d->db)
             continue;
-        if (snprintf(dbp, sizeof dbp, "%.128s/PIONEER/rekordbox/exportLibrary.db", d->mount) >= (int) sizeof dbp ||
+        if (snprintf(dbp, sizeof dbp, "%.128s/%s/rekordbox/exportLibrary.db", d->mount, pd_dir(d->mount)) >= (int) sizeof dbp ||
             !b2_usable(d, dbp))
             b2_db_close(d, "EP147 is letting go of it (eject)");
     }

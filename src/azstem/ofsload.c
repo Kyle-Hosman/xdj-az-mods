@@ -4,8 +4,9 @@
  *
  * A track's stem offset is the sum of two delays:
  *   E  EP147's: MP3 is decoded by libmpg123 with FLAGS 0x300 (gapless off) from
- *      the top of the file, and when the Info frame carries a "LAME" vendor
- *      string playback starts one frame (1152) later still;
+ *      the top of the file. Playback starts one MPEG frame later still when the
+ *      Info/Xing frame has the same channel mode as the first audio frame, and at
+ *      other than 44.1 kHz EP147's resampler adds its own delay;
  *   P  the stem set's own delay, which varies with the app version that made it.
  * P is not recorded anywhere, so it is measured: decode the head of the source
  * the way EP147 does (this process's libmpg123, EP147's config), apply E's frame
@@ -15,11 +16,11 @@
  * never jump under a playing track; the cost is that they open ~1 s after load,
  * with EP147's own audio playing until then.
  *
- * AAC in MP4 works the same way (m4a_decode_native, g_aac_rules). Only rules
- * verified against EP147's real audio are applied (g_ofs_rules, g_aac_rules).
- * Anything else (VBR/Xing, no Info frame, other vendors or rates, HE-AAC) is
- * measured and logged with what it would apply, but keeps offset 0. Unknown is
- * safe, wrong is not. */
+ * AAC in MP4 works the same way (m4a_decode_native). Only sources whose rate has a
+ * verified resampler delay are applied (g_ofs_cal); anything else is measured and
+ * logged with what it would apply, but keeps offset 0.
+ * Unknown is safe, wrong is not. Lossless sources have no decoder delay and no
+ * decoder here to measure with, so their offset is the resampler delay alone. */
 
 enum {
     MP3_CLS_NONE = 0,
@@ -32,45 +33,63 @@ static const char *mp3_cls_name(int c) {
     return (c >= 0 && c <= MP3_CLS_NOTAG) ? n[c] : "?";
 }
 
-/* Verified rules (vendor prefix is case-sensitive: EP147 adds the frame for
- * "LAME" only, not "Lame"):
- *   "LAME" 44.1k: +1 frame          "Lame" 44.1k: no frame
- *   "Lavc" 44.1k: no frame          "Lavc" 48k:   no frame, +27
- *   "LAME" 48k:   +1 frame (counted at the file's rate), +27
- * cal44 = 27 at 48k: EP147's resampler sits 27 samples (at 44.1k) later than
- * our linear one. */
+/* EP147's resampler delay against our linear one, in samples at 44.1 kHz, per source rate.
+ * Verified against EP147's real audio; a rate not listed here is not applied. */
 typedef struct {
-    const char *vendor;
     int rate;
-    long frame;
     long cal44;
-} ofs_rule_t;
-static const ofs_rule_t g_ofs_rules[] = {
-    {"LAME", 44100, 1152, 0},
-    {"Lame", 44100, 0, 0},
-    {"Lavc", 44100, 0, 0},
-    {"Lavc", 48000, 0, 27},
-    {"LAME", 48000, 1152, 27},
+} ofs_cal_t;
+static const ofs_cal_t g_ofs_cal[] = {
+    {22050, 59},
+    {24000, 54},
+    {32000, 41},
+    {44100, 0},
+    {48000, 27},
+    {88200, 15},
+    {96000, 14},
 };
-/* The rule for this Info-tagged file, or NULL = not proven (measure + log only). */
-static const ofs_rule_t *ofs_rule_for(int cls, int rate, const char *vendor) {
-    if (cls != MP3_CLS_INFO)
-        return NULL;
-    for (size_t i = 0; i < sizeof g_ofs_rules / sizeof g_ofs_rules[0]; i++)
-        if (g_ofs_rules[i].rate == rate && !strncmp(vendor, g_ofs_rules[i].vendor, 4))
-            return &g_ofs_rules[i];
+static const ofs_cal_t *ofs_cal_for(int rate) {
+    for (size_t i = 0; i < sizeof g_ofs_cal / sizeof g_ofs_cal[0]; i++)
+        if (g_ofs_cal[i].rate == rate)
+            return &g_ofs_cal[i];
     return NULL;
 }
-/* Model for a file no rule covers, so the log can say what it would apply: the
- * same case-sensitive frame rule, no resampler calibration. */
-static long ofs_guess_frame(const char *vendor) {
-    return !strncmp(vendor, "LAME", 4) ? 1152 : 0;
-}
 
-/* First MPEG audio frame after any ID3v2 tag: sample rate, and what its Info/Xing
- * header says. Returns the class; MP3_CLS_NONE if no Layer III frame was found. */
-static int mp3_probe(const char *path, int *rate, char *vendor, size_t vn) {
+/* One Layer III frame header. */
+typedef struct {
+    int ver, rate, mode; /* ver: 3 = MPEG-1; mode: 0 stereo, 1 joint, 2 dual, 3 mono */
+    long size;
+} mp3_hdr_t;
+static int mp3_hdr(const unsigned char *b, mp3_hdr_t *h) {
+    static const int rates[4][3] = {
+        {11025, 12000, 8000}, {0, 0, 0}, {22050, 24000, 16000}, {44100, 48000, 32000}};
+    static const short kbps[2][15] = {
+        {0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160},
+        {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}};
+    if (b[0] != 0xFF || (b[1] & 0xE0) != 0xE0)
+        return 0;
+    int ver = (b[1] >> 3) & 3, layer = (b[1] >> 1) & 3, bri = b[2] >> 4, sri = (b[2] >> 2) & 3;
+    if (ver == 1 || layer != 1 || sri == 3 || bri == 15 || bri == 0)
+        return 0;
+    h->ver = ver;
+    h->rate = rates[ver][sri];
+    h->mode = b[3] >> 6;
+    h->size = (ver == 3 ? 144L : 72L) * kbps[ver == 3][bri] * 1000 / h->rate + ((b[2] >> 1) & 1);
+    return 1;
+}
+#define MP3_SCAN (256 * 1024) /* the first frame lies within this much after the ID3 tag */
+
+/* The first MPEG audio frame after any ID3v2 tag: a Layer III header whose next frame follows it
+ * at the same version and rate, so a sync pattern inside padding or junk is not taken for one.
+ * Returns the class; MP3_CLS_NONE if none was found. *frame = what EP147 adds for an Info/Xing
+ * frame: one frame of samples when its channel mode equals the first audio frame's, else 0. The
+ * mode bits alone decide, whatever the vendor string or any other tag field says. *first = that
+ * frame's offset in the file. */
+static int mp3_probe(const char *path, int *rate, char *vendor, size_t vn, long *frame,
+                     long *first) {
     *rate = 0;
+    *frame = 0;
+    *first = 0;
     if (vn)
         vendor[0] = 0;
     FILE *f = fopen(path, "rbe");
@@ -84,34 +103,45 @@ static int mp3_probe(const char *path, int *rate, char *vendor, size_t vn) {
         if (h[5] & 0x10)
             skip += 10; /* footer present */
     }
-    static const int rates[4][3] = {
-        {11025, 12000, 8000}, {0, 0, 0}, {22050, 24000, 16000}, {44100, 48000, 32000}};
-    unsigned char b[4096];
-    size_t n = (fseek(f, skip, SEEK_SET) == 0) ? fread(b, 1, sizeof b, f) : 0;
+    unsigned char *b = malloc(MP3_SCAN);
+    size_t n = (b && fseek(f, skip, SEEK_SET) == 0) ? fread(b, 1, MP3_SCAN, f) : 0;
     fclose(f);
-    for (size_t i = 0; i + 4 < n; i++) {
-        if (b[i] != 0xFF || (b[i + 1] & 0xE0) != 0xE0)
+    int cls = MP3_CLS_NONE;
+    for (size_t i = 0; i + 4 <= n; i++) {
+        mp3_hdr_t a, c;
+        if (!mp3_hdr(b + i, &a))
             continue;
-        int ver = (b[i + 1] >> 3) & 3, layer = (b[i + 1] >> 1) & 3, sri = (b[i + 2] >> 2) & 3;
-        if (ver == 1 || layer != 1 || sri == 3 || (b[i + 2] >> 4) == 15 || (b[i + 2] >> 4) == 0)
+        size_t next = i + (size_t) a.size;
+        if (next + 4 > n || !mp3_hdr(b + next, &c) || c.ver != a.ver || c.rate != a.rate) {
+            /* An Info frame with no frame right after it: whether EP147 counts it is unproven,
+             * so the file has no class rather than the class of the frames behind it. */
+            size_t t = i + 4 + (a.ver == 3 ? (a.mode == 3 ? 17 : 32) : (a.mode == 3 ? 9 : 17));
+            if (t + 4 <= n && (!memcmp(b + t, "Info", 4) || !memcmp(b + t, "Xing", 4)))
+                break;
             continue;
-        *rate = rates[ver][sri];
-        int mono = (b[i + 3] >> 6) == 3;
-        size_t tag = i + 4 + (ver == 3 ? (mono ? 17 : 32) : (mono ? 9 : 17));
+        }
+        *rate = a.rate;
+        *first = skip + (long) i;
+        size_t tag = i + 4 + (a.ver == 3 ? (a.mode == 3 ? 17 : 32) : (a.mode == 3 ? 9 : 17));
+        cls = MP3_CLS_NOTAG;
         if (tag + 4 > n)
-            return MP3_CLS_NOTAG;
+            break;
         int info = !memcmp(b + tag, "Info", 4), xing = !memcmp(b + tag, "Xing", 4);
         if (!info && !xing)
-            return MP3_CLS_NOTAG;
+            break;
         if (tag + 120 + 9 <= n && vn > 9) {
             int k = 0;
             for (; k < 9 && b[tag + 120 + k] >= 0x20 && b[tag + 120 + k] < 0x7f; k++)
                 vendor[k] = (char) b[tag + 120 + k];
             vendor[k] = 0;
         }
-        return xing ? MP3_CLS_XING : MP3_CLS_INFO;
+        if (a.mode == c.mode)
+            *frame = a.ver == 3 ? 1152 : 576;
+        cls = xing ? MP3_CLS_XING : MP3_CLS_INFO;
+        break;
     }
-    return MP3_CLS_NONE;
+    free(b);
+    return cls;
 }
 
 /* libmpg123 as EP147 uses it: the same library, bound through the process's own
@@ -178,15 +208,21 @@ static long ofs_need_native(long maxn, int rate, long cal44) {
 }
 
 /* MP3 the way EP147 decodes it: `frame` zeros first at the file's rate, then
- * libmpg123 in EP147's config. Native-rate mono; returns a malloc'd buffer of
- * *got samples, or NULL. */
-static float *mp3_decode_native(const char *path, int rate, long frame, long need, long *got_out) {
+ * libmpg123 in EP147's config, fed from the first frame (`first`), since what lies before it can
+ * make the decoder lose a frame. Native-rate mono; returns a malloc'd buffer of *got samples, or
+ * NULL. */
+static float *mp3_decode_native(const char *path, int rate, long frame, long first, long need,
+                                long *got_out) {
     *got_out = 0;
     if (!m123_bind() || rate <= 0)
         return NULL;
     FILE *f = fopen(path, "rbe");
     if (!f)
         return NULL;
+    if (fseek(f, first, SEEK_SET) != 0) {
+        fclose(f);
+        return NULL;
+    }
     int err = 0;
     void *h = g_m123.new_(NULL, &err);
     if (!h) {
@@ -236,8 +272,7 @@ static float *mp3_decode_native(const char *path, int rate, long frame, long nee
  * resampled, plus the same +27 as MP3). So the model is a raw decode from the
  * first access unit, using the fdk-aac already loaded in EP147's process. EP147
  * decodes AAC with its own built-in decoder, so equivalence is verified per rule
- * (g_aac_rules), not assumed. AAC-LC only: SBR (HE-AAC) adds unmeasured decoder
- * delay. The MP4 parsing is the minimum needed to walk one track's sample table. */
+ * by source rate (g_ofs_cal), not assumed. The MP4 parsing is the minimum needed to walk one track's sample table. */
 static struct {
     int bound;
     void *(*open)(int, unsigned);
@@ -588,23 +623,86 @@ done:
     }
     return nat;
 }
-/* Verified AAC-LC rules (raw decode; afconvert 44.1k 2112, ffmpeg
- * 44.1k 1024, ffmpeg 48k 968). cal44 is the same resampler difference as MP3. */
-typedef struct {
-    int rate;
-    long cal44;
-} aac_rule_t;
-static const aac_rule_t g_aac_rules[] = {
-    {44100, 0},
-    {48000, 27},
-};
-static const aac_rule_t *aac_rule_for(int rate, int aot, int sbr) {
-    if (aot != 2 || sbr)
-        return NULL;
-    for (size_t i = 0; i < sizeof g_aac_rules / sizeof g_aac_rules[0]; i++)
-        if (g_aac_rules[i].rate == rate)
-            return &g_aac_rules[i];
-    return NULL;
+/* ---- Lossless sources: only their sample rate matters ---------------------------
+ * FLAC, WAV and AIFF have no decoder delay, and EP147 decodes them with code this process cannot
+ * call, so the offset is the resampler delay for the file's rate. Rate read from the file's own
+ * header; 0 = not a header this understands. */
+static uint32_t ofs_le32(const unsigned char *p) {
+    return (uint32_t) p[0] | ((uint32_t) p[1] << 8) | ((uint32_t) p[2] << 16) |
+           ((uint32_t) p[3] << 24);
+}
+/* The rate in an AIFF COMM chunk's 80-bit extended float. */
+static int aiff_rate(const unsigned char *x) {
+    int e = ((x[0] & 0x7f) << 8) | x[1];
+    int sh = 16383 + 31 - e; /* the mantissa's top 32 bits, an integer once shifted */
+    uint32_t m = be32(x + 2);
+    if ((x[0] & 0x80) || sh < 0 || sh > 31)
+        return 0;
+    return (int) (m >> sh);
+}
+static int lossless_rate(const char *path) {
+    FILE *f = fopen(path, "rbe");
+    if (!f)
+        return 0;
+    unsigned char h[64];
+    int rate = 0;
+    size_t n = fread(h, 1, 12, f);
+    if (n == 12 && !memcmp(h, "fLaC", 4)) {
+        /* STREAMINFO comes first: 4 block header + 10 + 20 bits of rate */
+        if (fread(h + 12, 1, 10, f) == 10)
+            rate = (h[18] << 12) | (h[19] << 4) | (h[20] >> 4);
+    } else if (n == 12 && ((!memcmp(h, "RIFF", 4) && !memcmp(h + 8, "WAVE", 4)) ||
+                           (!memcmp(h, "FORM", 4) && (!memcmp(h + 8, "AIFF", 4) ||
+                                                      !memcmp(h + 8, "AIFC", 4))))) {
+        int wav = h[0] == 'R';
+        off_t at = 12;
+        for (int guard = 0; guard < 256 && !rate; guard++) {
+            unsigned char c[26];
+            if (fseeko(f, at, SEEK_SET) != 0 || fread(c, 1, 8, f) != 8)
+                break;
+            uint32_t sz = wav ? ofs_le32(c + 4) : be32(c + 4);
+            if (wav && !memcmp(c, "fmt ", 4)) {
+                if (fread(c + 8, 1, 8, f) == 8)
+                    rate = (int) ofs_le32(c + 12);
+                break;
+            }
+            if (!wav && !memcmp(c, "COMM", 4)) {
+                if (fread(c + 8, 1, 18, f) == 18)
+                    rate = aiff_rate(c + 16);
+                break;
+            }
+            at += (off_t) sz + 8 + (sz & 1); /* chunks are padded to even */
+        }
+    }
+    fclose(f);
+    return rate > 0 && rate <= 768000 ? rate : 0;
+}
+/* The rate of an MP4's ALAC track from its sample entry, 0 if it has none. A 16.16 field, so only
+ * rates below 65536 are readable here; a higher rate reads as another rate or 0 and stays at offset 0
+ * unless the truncated value happens to be listed, which no listed rate is. */
+static int m4a_alac_rate(const char *path) {
+    FILE *f = fopen(path, "rbe");
+    if (!f)
+        return 0;
+    size_t mlen = 0;
+    unsigned char *moov = mp4_read_moov(f, &mlen);
+    fclose(f);
+    int rate = 0;
+    for (int t = 0; moov && !rate; t++) {
+        size_t tn, n1, n2, n3, n4, en;
+        const unsigned char *p = mp4_child(moov, mlen, "trak", t, &tn);
+        if (!p)
+            break;
+        if (!(p = mp4_child(p, tn, "mdia", 0, &n1)) || !(p = mp4_child(p, n1, "minf", 0, &n2)) ||
+            !(p = mp4_child(p, n2, "stbl", 0, &n3)) || !(p = mp4_child(p, n3, "stsd", 0, &n4)) ||
+            n4 < 8)
+            continue;
+        const unsigned char *alac = mp4_child(p + 8, n4 - 8, "alac", 0, &en);
+        if (alac && en >= 28)
+            rate = (alac[24] << 8) | alac[25];
+    }
+    free(moov);
+    return rate;
 }
 
 /* Frames decoded so far by every present stem (the gate's own min), ignoring the hold. */
@@ -620,17 +718,18 @@ static long ofs_stems_decoded(int deck) {
     return m < 0 ? 0 : m;
 }
 
-#define OFSL_HEAD ((long) AZ_EP147_RATE * 20) /* decode the first 20 s of the source */
+#define OFSL_HEAD ((long) AZ_EP147_RATE * 20) /* second pass: the first 20 s of the source */
+#define OFSL_LONG ((long) AZ_EP147_RATE * 90) /* last pass, for a long quiet start */
 #define OFSL_EARLY ((long) AZ_EP147_RATE * 6) /* first pass: a window starting in the first 6 s */
-#define OFSL_WAITMS 15000                     /* give up waiting for the stems after 15 s */
+#define OFSL_WAITMS 30000                     /* give up waiting for the stems after 30 s */
 
 /* ---- Offset cache: <stems folder>/azstem.ofs ----------------------------------
  * One line, "AZOFS1 <source size> <source mtime> <stems key> <lag>\n", written only
  * for an applied measurement. A repeat load of the same source with the same stem
  * files opens the gate without measuring. Any other content, or any key that differs,
- * is a miss and the load measures as usual. Bump the magic whenever g_ofs_rules or
- * g_aac_rules change, so no lag measured under older rules is reused. */
-#define OFSC_MAGIC "AZOFS1"
+ * is a miss and the load measures as usual. Bump the magic whenever the frame rule or
+ * g_ofs_cal change, so no lag measured under older rules is reused. */
+#define OFSC_MAGIC "AZOFS2"
 static void ofs_cache_path(int deck, char *out, size_t n) {
     snprintf(out, n, "%s/azstem.ofs", g_env_dir[deck]);
 }
@@ -710,19 +809,19 @@ static long ofs_source_head(const char *src, int is_mp3, long maxn, float *x, in
     long got = 0, n = 0;
     *proven = 0;
     if (is_mp3) {
-        int cls = mp3_probe(src, rate, vendor, vn);
+        long frame = 0, first = 0;
+        int cls = mp3_probe(src, rate, vendor, vn, &frame, &first);
         snprintf(kind, kn, "MP3 %s", mp3_cls_name(cls));
         if (cls == MP3_CLS_NONE) {
             *why = "no Layer III frame found";
             return 0;
         }
-        const ofs_rule_t *rule = ofs_rule_for(cls, *rate, vendor);
-        long cal = rule ? rule->cal44 : 0;
-        nat = mp3_decode_native(src, *rate, rule ? rule->frame : ofs_guess_frame(vendor),
-                                ofs_need_native(maxn, *rate, cal), &got);
+        const ofs_cal_t *cal = ofs_cal_for(*rate);
+        long c44 = cal ? cal->cal44 : 0;
+        nat = mp3_decode_native(src, *rate, frame, first, ofs_need_native(maxn, *rate, c44), &got);
         if (nat)
-            n = ofs_to44(nat, got, *rate, cal, x, maxn);
-        *proven = rule != NULL;
+            n = ofs_to44(nat, got, *rate, c44, x, maxn);
+        *proven = cal != NULL;
     } else {
         int aot = 0, sbr = 0;
         char desc[64];
@@ -734,9 +833,10 @@ static long ofs_source_head(const char *src, int is_mp3, long maxn, float *x, in
             *why = "m4a: no decodable AAC track";
             return 0;
         }
-        const aac_rule_t *rule = aac_rule_for(*rate, aot, sbr);
-        n = ofs_to44(nat, got, *rate, rule ? rule->cal44 : 0, x, maxn);
-        *proven = rule != NULL;
+        /* HE-AAC is resampled from its half-rate core, whatever rate it is decoded to */
+        const ofs_cal_t *cal = (aot == 2 || sbr) ? ofs_cal_for(sbr ? *rate / 2 : *rate) : NULL;
+        n = ofs_to44(nat, got, *rate, cal ? cal->cal44 : 0, x, maxn);
+        *proven = cal != NULL;
     }
     free(nat);
     if (n < OFS_N + 2 * OFS_LAGMAX) {
@@ -798,8 +898,8 @@ static int ofs_try(int deck, const float *x, long n, long blim, long t0, long lo
  * The gate stays closed for as long as this runs, so a stem toggled meanwhile is not
  * heard until it returns: a cached result opens it at once, and the first pass looks
  * only at the first seconds so that it needs only the first seconds of decoded stems.
- * The second pass, over the whole 20 s head, runs only when the first finds no
- * confident peak. `skey` identifies the stem files (stems_key). */
+ * The later passes, over 20 s and then 90 s of the source, run only when the one
+ * before finds no confident peak. `skey` identifies the stem files (stems_key). */
 static void ofs_load_measure(int deck, const char *track, const char *src,
                              unsigned long long skey) {
     deck_stems *dk = &g_dk[deck];
@@ -821,8 +921,40 @@ static void ofs_load_measure(int deck, const char *track, const char *src,
     int is_mp3 = dot && !strcasecmp(dot, ".mp3");
     int is_m4a = dot && (!strcasecmp(dot, ".m4a") || !strcasecmp(dot, ".mp4"));
     if (!is_mp3 && !is_m4a) {
-        why = "not mp3/m4a (FLAC/WAV/AIFF have no decoder delay)";
+        rate = lossless_rate(src);
+        snprintf(kind, sizeof kind, "lossless");
+        const ofs_cal_t *cal = ofs_cal_for(rate);
+        if (!cal) {
+            why = rate ? "lossless: no verified resampler delay for this rate"
+                       : "not mp3/m4a, or no sample rate in its header";
+            goto out;
+        }
+        if (dev_flag(NOSTEMOFS_PATH)) {
+            why = "azstem.nostemofs -- logged, not applied";
+            goto out;
+        }
+        lag = cal->cal44;
+        apply = 1;
         goto out;
+    }
+    if (is_m4a) {
+        int ar = m4a_alac_rate(src);
+        if (ar) {
+            rate = ar;
+            snprintf(kind, sizeof kind, "ALAC");
+            const ofs_cal_t *cal = ofs_cal_for(rate);
+            if (!cal) {
+                why = "lossless: no verified resampler delay for this rate";
+                goto out;
+            }
+            if (dev_flag(NOSTEMOFS_PATH)) {
+                why = "azstem.nostemofs -- logged, not applied";
+                goto out;
+            }
+            lag = cal->cal44;
+            apply = 1;
+            goto out;
+        }
     }
     {
         struct stat st;
@@ -837,16 +969,16 @@ static void ofs_load_measure(int deck, const char *track, const char *src,
         cached = apply = 1;
         goto out;
     }
-    x = malloc((size_t) OFSL_HEAD * sizeof(float));
+    x = malloc((size_t) OFSL_LONG * sizeof(float));
     if (!x) {
         why = "no memory";
         goto out;
     }
-    static const long head[2] = {OFSL_EARLY + OFS_N + OFS_LAGMAX, OFSL_HEAD};
-    static const long blim[2] = {OFSL_EARLY, OFSL_HEAD};
+    static const long head[3] = {OFSL_EARLY + OFS_N + OFS_LAGMAX, OFSL_HEAD, OFSL_LONG};
+    static const long blim[3] = {OFSL_EARLY, OFSL_HEAD, OFSL_LONG};
     ofs_res_t rr = {0};
     int have = 0;
-    for (pass = 1; pass <= 2; pass++) {
+    for (pass = 1; pass <= 3; pass++) {
         why = NULL;
         long n = ofs_source_head(src, is_mp3, head[pass - 1], x, &rate, vendor, sizeof vendor, kind,
                                  sizeof kind, &proven, &why, deck);
@@ -862,8 +994,8 @@ static void ofs_load_measure(int deck, const char *track, const char *src,
         if (n < head[pass - 1])
             break; /* the source is shorter than this head: a second pass sees nothing new */
     }
-    if (pass > 2)
-        pass = 2;
+    if (pass > 3)
+        pass = 3;
     if (!have)
         goto out;
     lag = rr.lag;

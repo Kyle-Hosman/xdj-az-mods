@@ -111,5 +111,26 @@ int main(void) {
     CHECK("turned back on before a reload: nothing left to reload, reason shown again", !cm_need_reload() && seen("Not loaded: Needs AZ-MODS"));
     page(AZCM_DISABLED, "Disabled");
     CHECK("CONTROL: Enable pressed on a disabled mod asks for a reload", cm_need_reload() && seen("Enabled after Reload."));
+
+    ut_suite = "installed checkbox tap";
+    char buf[128];
+    uint32_t col;
+    page(AZCM_LOADED, "");
+    cm_pend_set("testmod", 0); /* the tap shows its new state at once (CMC_CHK) */
+    snprintf(g_cm_flip.id, sizeof g_cm_flip.id, "testmod");
+    g_cm_flip.at = cm_ms() ? cm_ms() : 1;
+    CHECK("turned off, no answer yet: \"Turning off...\", not \"after Reload\"",
+          !strcmp(cm_state_text(&g_mod, buf, sizeof buf, &col), "Turning off..."));
+    cm_pend_set("testmod", 1);
+    page(AZCM_DISABLED, "Disabled");
+    CHECK("turned on, no answer yet: \"Turning on...\"", !strcmp(cm_state_text(&g_mod, buf, sizeof buf, &col), "Turning on..."));
+    snprintf(g_cm_flip.id, sizeof g_cm_flip.id, "othermod");
+    CHECK("another mod's tap leaves this one's text", !strcmp(cm_state_text(&g_mod, buf, sizeof buf, &col), "Enabled after Reload."));
+    snprintf(g_cm_flip.id, sizeof g_cm_flip.id, "testmod");
+    g_cm_flip.at = cm_ms() - CM_FLIP_MS - 1;
+    CHECK("no answer within CM_FLIP_MS: the pending text again", !strcmp(cm_state_text(&g_mod, buf, sizeof buf, &col), "Enabled after Reload."));
+    g_cm_flip.at = 0;
+    CHECK("answered and kept for a reload: \"Enabled after Reload.\"",
+          !strcmp(cm_state_text(&g_mod, buf, sizeof buf, &col), "Enabled after Reload."));
     return ut_summary();
 }

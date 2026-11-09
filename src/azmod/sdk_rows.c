@@ -74,7 +74,7 @@ static int cm_row_set(int handle, int value) {
      * be the mod whose code called (an official row has no owner and is refused) */
     cm_mod *c = cm_find(azf_owner(handle));
     if (!c || !cm_called_by(c, CM_RA()) ||
-        (c->state != AZCM_LOADED && (int) (c - g_cm) != g_cm_loading)) {
+        (!cm_running(c) && (int) (c - g_cm) != g_cm_loading)) {
         dbg("community: row_set %d refused: not a running mod's own row, from its own code\n", handle);
         return -1;
     }
@@ -93,11 +93,16 @@ static int cm_row_lookup(const char *official_key) {
  * the set of running mods changes. */
 static void sdk_rows_tick(void) {
     static int seen_n = -1, seen_live = -1;
-    if (g_cm_n == seen_n && g_cm_live == seen_live)
+    if (g_cm_n == seen_n && cm_nlive() == seen_live)
         return;
     seen_n = g_cm_n;
-    seen_live = g_cm_live;
+    seen_live = cm_nlive();
     for (int i = 0; i < g_cm_n; i++)
-        if (g_cm[i].state != AZCM_LOADED && i != g_cm_loading && azf_retire_owner(g_cm[i].id) > 0)
+        if (!cm_running(&g_cm[i]) && i != g_cm_loading && azf_retire_owner(g_cm[i].id) > 0)
             cm_logf(&g_cm[i], 1, "its Mod Menu rows are hidden: the mod is not running");
+}
+/* A mod turned off live: its rows leave the menu now (init() registers them again, same rows). */
+static void sdk_rows_forget(cm_mod *c) {
+    if (azf_retire_owner(c->id) > 0)
+        cm_logf(c, 1, "its Mod Menu rows are hidden: the mod is not running");
 }

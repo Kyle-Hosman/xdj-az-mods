@@ -96,8 +96,51 @@ static void *logger(void *a) {
     return NULL;
 }
 #endif
+#ifdef MOD_LIVE
+/* turned off and on while running: every call the core makes into it must fall between init()
+ * and stop(). The harness reads these through dlsym. */
+static int live_alive;
+/* the harness's counters (it exports them; a mod exports nothing but its entry) */
+extern int az_live_probe[4] __attribute__((weak));
+static int live_dummy[4];
+#define LP (az_live_probe ? az_live_probe : live_dummy)
+#define az_test_inits (LP[0])
+#define az_test_stops (LP[1])
+#define az_test_overlap (LP[2])
+#define az_test_filtered (LP[3])
+static void live_check_in(void) {
+    if (!__atomic_load_n(&live_alive, __ATOMIC_SEQ_CST)) __atomic_add_fetch(&az_test_overlap, 1, __ATOMIC_RELAXED);
+}
+static void live_check_out(void) {   /* still running at the end of the call: stop() did not run meanwhile */
+    for (volatile int i = 0; i < 2000; i++) {}
+    live_check_in();
+}
+static int live_filter(int bus, unsigned char *f, int len, void *user) {
+    (void) bus;
+    (void) f;
+    (void) len;
+    (void) user;
+    live_check_in();
+    __atomic_add_fetch(&az_test_filtered, 1, __ATOMIC_RELAXED);
+    live_check_out();
+    return AZ_FRAME_OK;
+}
+static void stop(void) {
+    __atomic_store_n(&live_alive, 0, __ATOMIC_SEQ_CST);
+    __atomic_add_fetch(&az_test_stops, 1, __ATOMIC_RELAXED);
+#ifdef MOD_TAILSTOP
+    C->cfg_set(MOD_ID, "stopped", 1); /* the last statement: a tail call at -O2 */
+#endif
+}
+#define MOD_STOP stop
+#endif
 static int init(const az_core_v1 *core) {
     C = core;
+#ifdef MOD_LIVE
+    __atomic_add_fetch(&az_test_inits, 1, __ATOMIC_RELAXED);
+    if (C->frame_filter(MOD_ID, 1u << AZ_BUS_ERP_LED, live_filter, NULL) != 0) return 7;
+    __atomic_store_n(&live_alive, 1, __ATOMIC_SEQ_CST);
+#endif
     C->log(MOD_ID, "init on %s", C->fw_tag());
 #ifdef MOD_INITFAIL
     return 3;
@@ -287,6 +330,12 @@ static void tick(void) {
 static int frame(int bus, unsigned char *f, int len) {
     (void) bus;
     (void) len;
+#ifdef MOD_LIVE
+    live_check_in();
+    struct timespec ts = {0, 5000000}; /* a 5 ms call: a live stop that does not wait for it overlaps it */
+    nanosleep(&ts, NULL);
+    live_check_out();
+#endif
     f[0] = 42;
 #ifdef MOD_FRAMELOG
     C->log(MOD_ID, "logged from on_frame");                    /* queued, written by the next tick */
@@ -306,7 +355,10 @@ static const char *const TAGS[] = {FWTAG, NULL};
 #else
 #define MOD_INIT init
 #endif
-static const az_mod_v1 MOD = {MOD_ABI, MOD_SIZE, MOD_ID, TAGS, MOD_INIT, tick, frame};
+#ifndef MOD_STOP
+#define MOD_STOP NULL
+#endif
+static const az_mod_v1 MOD = {MOD_ABI, MOD_SIZE, MOD_ID, TAGS, MOD_INIT, tick, frame, MOD_STOP};
 #ifdef MOD_UNDEF
 void az_test_symbol_nobody_defines(void); /* dlopen (RTLD_NOW) cannot resolve it */
 #endif

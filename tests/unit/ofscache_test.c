@@ -41,35 +41,35 @@ int main(int argc, char **argv) {
     mkdir(argv[1], 0755);
     long lag = 0;
 
-    CHECK("a line for this source and stem set is taken", parse("AZOFS1 1000 2000 3000 1042\n", &lag) && lag == 1042);
-    CHECK("a negative lag is taken", parse("AZOFS1 1000 2000 3000 -77\n", &lag) && lag == -77);
+    CHECK("a line for this source and stem set is taken", parse("AZOFS2 1000 2000 3000 1042\n", &lag) && lag == 1042);
+    CHECK("a negative lag is taken", parse("AZOFS2 1000 2000 3000 -77\n", &lag) && lag == -77);
     CHECK("the window's edges are taken",
-          parse("AZOFS1 1000 2000 3000 8192\n", &lag) && parse("AZOFS1 1000 2000 3000 -8192\n", &lag));
+          parse("AZOFS2 1000 2000 3000 8192\n", &lag) && parse("AZOFS2 1000 2000 3000 -8192\n", &lag));
     lag = 5;
     CHECK("a lag past the window is a miss, and *lag is untouched",
-          !parse("AZOFS1 1000 2000 3000 8193\n", &lag) && !parse("AZOFS1 1000 2000 3000 -8193\n", &lag) &&
+          !parse("AZOFS2 1000 2000 3000 8193\n", &lag) && !parse("AZOFS2 1000 2000 3000 -8193\n", &lag) &&
               lag == 5);
-    CHECK("another source size is a miss", !parse("AZOFS1 1001 2000 3000 1042\n", &lag));
-    CHECK("another source mtime is a miss", !parse("AZOFS1 1000 2001 3000 1042\n", &lag));
-    CHECK("another stem set is a miss", !parse("AZOFS1 1000 2000 3001 1042\n", &lag));
-    CHECK("another magic is a miss", !parse("AZOFS2 1000 2000 3000 1042\n", &lag) &&
-                                         !parse("AZOFS1X 1000 2000 3000 1042\n", &lag) &&
-                                         !parse("azofs1 1000 2000 3000 1042\n", &lag));
-    CHECK("a line without its newline is a miss", !parse("AZOFS1 1000 2000 3000 1042", &lag));
-    CHECK("an extra field is a miss", !parse("AZOFS1 1000 2000 3000 1042 9\n", &lag));
-    CHECK("a missing field is a miss", !parse("AZOFS1 1000 2000 1042\n", &lag));
-    CHECK("text after the newline is a miss", !parse("AZOFS1 1000 2000 3000 1042\nx", &lag));
+    CHECK("another source size is a miss", !parse("AZOFS2 1001 2000 3000 1042\n", &lag));
+    CHECK("another source mtime is a miss", !parse("AZOFS2 1000 2001 3000 1042\n", &lag));
+    CHECK("another stem set is a miss", !parse("AZOFS2 1000 2000 3001 1042\n", &lag));
+    CHECK("another magic is a miss", !parse("AZOFS1 1000 2000 3000 1042\n", &lag) &&
+                                         !parse("AZOFS2X 1000 2000 3000 1042\n", &lag) &&
+                                         !parse("azofs2 1000 2000 3000 1042\n", &lag));
+    CHECK("a line without its newline is a miss", !parse("AZOFS2 1000 2000 3000 1042", &lag));
+    CHECK("an extra field is a miss", !parse("AZOFS2 1000 2000 3000 1042 9\n", &lag));
+    CHECK("a missing field is a miss", !parse("AZOFS2 1000 2000 1042\n", &lag));
+    CHECK("text after the newline is a miss", !parse("AZOFS2 1000 2000 3000 1042\nx", &lag));
     CHECK("two spaces, a tab, a plus sign or a leading space is a miss",
-          !parse("AZOFS1 1000  2000 3000 1042\n", &lag) && !parse("AZOFS1 1000\t2000 3000 1042\n", &lag) &&
-              !parse("AZOFS1 +1000 2000 3000 1042\n", &lag) && !parse(" AZOFS1 1000 2000 3000 1042\n", &lag));
-    CHECK("a sign on the stems key is a miss", !parse("AZOFS1 1000 2000 -3000 1042\n", &lag));
+          !parse("AZOFS2 1000  2000 3000 1042\n", &lag) && !parse("AZOFS2 1000\t2000 3000 1042\n", &lag) &&
+              !parse("AZOFS2 +1000 2000 3000 1042\n", &lag) && !parse(" AZOFS2 1000 2000 3000 1042\n", &lag));
+    CHECK("a sign on the stems key is a miss", !parse("AZOFS2 1000 2000 -3000 1042\n", &lag));
     CHECK("a value too large for its type is a miss",
-          !parse("AZOFS1 99999999999999999999 2000 3000 1042\n", &lag) &&
-              !parse("AZOFS1 1000 2000 99999999999999999999 1042\n", &lag) &&
-              !parse("AZOFS1 1000 2000 3000 99999999999999999999\n", &lag));
+          !parse("AZOFS2 99999999999999999999 2000 3000 1042\n", &lag) &&
+              !parse("AZOFS2 1000 2000 99999999999999999999 1042\n", &lag) &&
+              !parse("AZOFS2 1000 2000 3000 99999999999999999999\n", &lag));
     CHECK("an empty line is a miss", !parse("", &lag) && !parse("\n", &lag));
     CHECK("the largest stems key is taken",
-          ofs_cache_parse("AZOFS1 1 2 18446744073709551615 0\n", 1, 2, 18446744073709551615ULL, &lag));
+          ofs_cache_parse("AZOFS2 1 2 18446744073709551615 0\n", 1, 2, 18446744073709551615ULL, &lag));
 
     /* save and load through the deck's folder */
     snprintf(g_env_dir[2], sizeof g_env_dir[2], "%s", argv[1]);
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     CHECK("saved and loaded back: the same lag", ofs_cache_load(2, 1000, 2000, 3000ULL, &lag) && lag == -1042);
     CHECK("no temporary file is left", access(tmp, F_OK) != 0);
     CHECK("the saved file is a miss for another stem set", !ofs_cache_load(2, 1000, 2000, 3001ULL, &lag));
-    put(path, "AZOFS1 1000 2000 30");
+    put(path, "AZOFS2 1000 2000 30");
     CHECK("a cut file is a miss", !ofs_cache_load(2, 1000, 2000, 3000ULL, &lag));
     CHECK("no folder for the deck: nothing loaded", !ofs_cache_load(3, 1000, 2000, 3000ULL, &lag));
 

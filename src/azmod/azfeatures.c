@@ -80,6 +80,7 @@ struct az_reg {
     char choice[AZ_REG_CHOICES][AZ_REG_LABEL];
     const char *choice_p[AZ_REG_CHOICES];
     unsigned char *icon; /* the mod's icon, copied (AZ_ROW_ICON_N squared), or NULL */
+    int retired;         /* its mod stopped (azf_retire_owner); the same key registered again revives it */
 };
 static struct az_reg g_reg[AZ_REG_MAX];
 static int g_nreg;               /* registered rows so far (append only) */
@@ -437,16 +438,20 @@ int azf_register(const char *mod_id, const az_feature_v2 *in) {
         az_logf(mod_id, f.key, "an ACTION needs on_activate");
         return -1;
     }
-    int mine = 0, parent = AZF_NONE;
+    int mine = 0, parent = AZF_NONE, slot = -1;
     for (int k = 0; k < g_nreg; k++) {
         if (strcmp(g_reg[k].owner, mod_id))
             continue;
         mine++;
         if (!strcmp(g_reg[k].key, f.key)) {
+            if (g_reg[k].retired) { /* its mod was turned off and is starting again: same row */
+                slot = k;
+                continue;
+            }
             az_logf(mod_id, f.key, "key already registered");
             return -1;
         }
-        if (f.parent && !strcmp(g_reg[k].key, f.parent) &&
+        if (f.parent && !g_reg[k].retired && !strcmp(g_reg[k].key, f.parent) &&
             (g_reg[k].r.d.kind == AZ_ROW_GROUP || g_reg[k].r.d.kind == AZ_ROW_TOGGLE))
             parent = AZI_REG0 + k;
     }
@@ -454,11 +459,12 @@ int azf_register(const char *mod_id, const az_feature_v2 *in) {
         az_logf(mod_id, f.key, "parent is not one of this mod's earlier GROUP/TOGGLE rows");
         return -1;
     }
-    if (mine >= AZ_REG_PER_MOD || g_nreg >= AZ_REG_MAX) {
+    if (slot < 0 && (mine >= AZ_REG_PER_MOD || g_nreg >= AZ_REG_MAX)) {
         az_logf(mod_id, f.key, "over the row limit (16 per mod, 128 in all)");
         return -1;
     }
-    struct az_reg *g = &g_reg[g_nreg];
+    struct az_reg *g = &g_reg[slot >= 0 ? slot : g_nreg];
+    free(g->icon);
     memset(g, 0, sizeof *g);
     az_cpy(g->owner, sizeof g->owner, mod_id);
     az_cpy(g->key, sizeof g->key, f.key);
@@ -488,6 +494,10 @@ int azf_register(const char *mod_id, const az_feature_v2 *in) {
         g->r.d.choices = NULL;
     g->r.parent = parent;
     g->r.cfg = -1;
+    if (slot >= 0) { /* revived: its handle and the value it had stay */
+        az_publish();
+        return AZI_REG0 + slot;
+    }
     int id = AZI_REG0 + g_nreg;
     g_nreg++;
     __atomic_store_n(&az_val[id], az_default_of(id), __ATOMIC_RELAXED);
@@ -504,6 +514,7 @@ int azf_retire_owner(const char *mod_id) {
         if (strcmp(g->owner, mod_id) || (g->r.d.flags & AZ_ROW_HIDDEN))
             continue;
         g->r.d.flags |= AZ_ROW_HIDDEN;
+        g->retired = 1;
         g->r.d.available = NULL;
         g->r.d.on_change = NULL;
         g->r.d.on_activate = NULL;

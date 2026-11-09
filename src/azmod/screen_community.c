@@ -184,6 +184,21 @@ static void cm_ask(const char *title, const char *text, const char *fmt, const c
     snprintf(g_cm_ask.arg, sizeof g_cm_ask.arg, "%s", arg);
     g_cm_ask.open = azcm_confirm(title, text, "Remove", cm_ask_done, 0) == 0;
 }
+/* mods installed or updated this start: they load only after a Reload, never live */
+static char g_cm_fresh_ids[8][33];
+static int cm_fresh_install(const char *id) {
+    for (int k = 0; k < 8; k++)
+        if (!strcmp(g_cm_fresh_ids[k], id)) return 1;
+    return 0;
+}
+static void cm_fresh_add(const char *id) {
+    if (cm_fresh_install(id)) return;
+    for (int k = 0; k < 8; k++)
+        if (!g_cm_fresh_ids[k][0]) {
+            snprintf(g_cm_fresh_ids[k], sizeof g_cm_fresh_ids[k], "%s", id);
+            return;
+        }
+}
 /* mods removed this start (the button and the Installed list say so until the reload) */
 static char g_cm_removed[8][33];
 static void cm_removed_add(const char *id) {
@@ -409,9 +424,20 @@ static void cm_load(void) {   /* re-read catalog + status when they changed; at 
             /* offer Reload only once a request has changed what loads: a refused install
              * (sha256 mismatch, no network, ...) leaves the stick as it was */
             if (!strcmp(g_cs.state, "done") && (!strcmp(g_cs.op, "install") || !strcmp(g_cs.op, "remove"))) g_cm_reload = 1;
-            if (!strcmp(g_cs.state, "done") && g_cs.id[0] && (!strcmp(g_cs.op, "enable") || !strcmp(g_cs.op, "disable")))
-                cm_pend_set(g_cs.id, !strcmp(g_cs.op, "enable"));
+            if (!strcmp(g_cs.state, "done") && g_cs.id[0] && (!strcmp(g_cs.op, "enable") || !strcmp(g_cs.op, "disable"))) {
+                int on = !strcmp(g_cs.op, "enable");
+                /* a mod with stop() changes now; the row then shows what it does, and the
+                 * fetcher's "turns on after Reload" line is not shown */
+                /* never for the status an earlier start left, nor for a mod installed or updated
+                 * this start (the stage still holds what loaded at the start) */
+                if (seen && !cm_fresh_install(g_cs.id) && azcm_live_set(g_cs.id, on)) {
+                    cm_pend_drop(g_cs.id);
+                    g_cs.msg[0] = 0;
+                } else
+                    cm_pend_set(g_cs.id, on);
+            }
             if (!strcmp(g_cs.state, "done") && g_cs.id[0] && !strcmp(g_cs.op, "remove")) cm_removed_add(g_cs.id);
+            if (!strcmp(g_cs.state, "done") && g_cs.id[0] && !strcmp(g_cs.op, "install")) cm_fresh_add(g_cs.id);
             if (!strcmp(g_cs.state, "done") && g_cs.id[0] && !strcmp(g_cs.op, "install"))
                 for (int k = 0; k < 8; k++)
                     if (!strcmp(g_cm_removed[k], g_cs.id)) g_cm_removed[k][0] = 0;
@@ -538,6 +564,12 @@ static int cm_master_stick(void) {
     return off && azcm_off_by_stick() && off == azcm_all_off();
 }
 static const char *cm_state_text(const azcm_info_t *m, char *buf, int n, uint32_t *col) {
+    /* a checkbox tap not yet answered: a mod with stop() changes at the answer, without a
+     * reload, so "after Reload" waits for it (cm_load) */
+    if (g_cm_flip.at && !strcmp(g_cm_flip.id, m->id) && cm_ms() - g_cm_flip.at <= CM_FLIP_MS) {
+        *col = C_AVAIL;
+        return cm_pend_get(m->id) == 0 ? "Turning off..." : "Turning on...";
+    }
     switch (m->state) {
     case AZCM_LOADED:
         if (cm_removed(m->id)) {

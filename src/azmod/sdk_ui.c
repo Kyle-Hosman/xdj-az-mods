@@ -77,7 +77,7 @@ static void sd_drain(struct sdq *q) {
     pthread_once(&g_sd_q_once, sd_q_init);
     struct sd_job j;
     for (int k = 0; k < 16 && sdq_pop(q, &j); k++) {
-        if (j.owner < 0 || j.owner >= g_cm_n || g_cm[j.owner].state != AZCM_LOADED)
+        if (j.owner < 0 || j.owner >= g_cm_n || !cm_running(&g_cm[j.owner]))
             continue; /* the mod was stopped meanwhile */
         if (j.kind == SDJ_BANNER)
             az_banner_box(j.text, NULL, j.ms);
@@ -106,7 +106,7 @@ static struct {
 static void sd_deliver(struct sc_answer a) {
     if (!a.fn)
         return;
-    if (a.owner == -1 || (a.owner >= 0 && a.owner < g_cm_n && g_cm[a.owner].state == AZCM_LOADED))
+    if (a.owner == -1 || (a.owner >= 0 && a.owner < g_cm_n && cm_running(&g_cm[a.owner])))
         a.fn(a.yes, a.user);
 }
 
@@ -267,7 +267,7 @@ static void sdk_confirm_tick(void) {
         sd_dlg_close(0); /* could not be put up: no */
     /* the asking mod was switched off under its question: the dialog goes, no answer is run */
     if (g_sd_dlg.up && g_sd_dlg.owner >= 0 &&
-        (g_sd_dlg.owner >= g_cm_n || g_cm[g_sd_dlg.owner].state != AZCM_LOADED))
+        (g_sd_dlg.owner >= g_cm_n || !cm_running(&g_cm[g_sd_dlg.owner])))
         sd_dlg_close(0);
 }
 /* UI thread, from community_tick while mods run: their post_ui callbacks. */
@@ -277,6 +277,7 @@ static void sdk_ui_tick(void) {
 
 /* ---- thread_start ---- */
 static _Atomic int g_sd_threads[CM_MAX]; /* running threads per mod (at most SD_MAX_THREADS) */
+static int sd_threads_of(int owner) { return atomic_load(&g_sd_threads[owner]); }
 struct sd_start {
     void *(*fn)(void *);
     void *arg;
@@ -298,7 +299,7 @@ static int sd_thread_start(const char *id, const char *name, void *(*fn)(void *)
     if (!c || !fn)
         return -1;
     int owner = (int) (c - g_cm);
-    int loaded = c->state == AZCM_LOADED || owner == g_cm_loading;
+    int loaded = cm_running(c) || owner == g_cm_loading;
     /* the slot is claimed before the check, so two of the mod's threads asking at once can
      * never both pass with one slot left */
     int before = atomic_fetch_add_explicit(&g_sd_threads[owner], 1, memory_order_relaxed);

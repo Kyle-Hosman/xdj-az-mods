@@ -7,6 +7,9 @@ _edata
 _end
 _fini
 _init
+azstem_avail
+azstem_ctl_set
+azstem_curtrack_seq
 azstem_deck_beat_phase
 azstem_deck_has_track
 azstem_deck_snapshot
@@ -34,5 +37,6 @@ azstem_stem_fx
 azstem_stem_fx_config
 azstem_stem_fx_on
 azstem_stem_gain
+azstem_track_env
 azstem_trackgen
 azstem_wave

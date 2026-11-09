@@ -5,6 +5,9 @@
  *   - broadband audio: the exact lag, confident;
  *   - bass-heavy audio, whose correlation peak is a lobe many coarse bins wide: the exact lag,
  *     confident (the lobe's shoulder is the same alignment, not a rival);
+ *   - sustained bass under other parts, which correlates with itself at every period of the bass:
+ *     the exact lag, confident, through the second difference that lifts the other parts;
+ *   - sustained bass alone, and a test tone: nothing tells the periods apart, not confident;
  *   - audio that repeats inside the search window: two equal peaks, not confident;
  *   - a true lag past the search window: the peak sits on the window's edge, not confident;
  *   - stems that are not this audio: not confident. */
@@ -49,6 +52,18 @@ static void bass(float *s) {
 static void broadband(float *s) {
     for (long i = 0; i < LEN; i++)
         s[i] = noise() * (float) (0.5 + 0.5 * sin(2 * M_PI * 2.0 * i / SR));
+}
+/* A sustained sine: a bass note held through the whole window. */
+static void add_sine(float *s, double hz, double amp) {
+    for (long i = 0; i < LEN; i++)
+        s[i] += (float) (amp * sin(2 * M_PI * hz * i / SR));
+}
+/* Hats on a grid with a little of everything else: short noise bursts every `period` seconds. */
+static void add_hats(float *s, double period, double amp) {
+    long step = (long) (period * SR);
+    for (long t = 0; t < LEN; t += step)
+        for (long i = 0; i < 2000 && t + i < LEN; i++)
+            s[t + i] += (float) (amp * noise() * exp(-i / 300.0));
 }
 /* Two slow sines (periods past the whole search window): one correlation lobe, wider than the
  * window, so a true lag outside it puts the highest correlation on the window's edge. */
@@ -98,9 +113,47 @@ int main(void) {
     bass(a);
     for (size_t i = 0; i < sizeof lags / sizeof lags[0]; i++) {
         ofs_res_t r = measure(a, a, lags[i]);
-        snprintf(name, sizeof name, "bass-heavy, lag %ld: exact (%ld) and confident (fine %.3f, lead %.3f)",
+        snprintf(name, sizeof name, "bass-heavy, lag %ld: exact (%ld) and confident on the first measurement (fine %.3f, lead %.3f)",
                  lags[i], r.lag, r.fine, r.coarse - r.second);
-        CHECK(name, r.lag == lags[i] && confident(r));
+        CHECK(name, r.lag == lags[i] && confident(r) && !r.whitened);
+    }
+
+    memset(a, 0, sizeof a);
+    add_sine(a, 41.0, 0.8);
+    add_hats(a, 60.0 / 130 / 4, 0.2);
+    for (size_t i = 0; i < sizeof lags / sizeof lags[0]; i++) {
+        ofs_res_t r = measure(a, a, lags[i]);
+        snprintf(name, sizeof name, "sustained bass with hats, lag %ld: exact (%ld) and confident (fine %.3f, lead %.3f)",
+                 lags[i], r.lag, r.fine, r.coarse - r.second);
+        CHECK(name, r.lag == lags[i] && confident(r) && r.whitened);
+    }
+    memset(a, 0, sizeof a);
+    add_sine(a, 55.0, 1.0);
+    {
+        ofs_res_t r = measure(a, a, 2257);
+        snprintf(name, sizeof name, "sustained bass alone: not confident (lag %ld, lead %.3f)", r.lag,
+                 r.coarse - r.second);
+        CHECK(name, !confident(r));
+    }
+    memset(a, 0, sizeof a);
+    add_sine(a, 1000.0, 1.0);
+    {
+        ofs_res_t r = measure(a, a, 1105);
+        snprintf(name, sizeof name, "a test tone: not confident (lag %ld, lead %.3f)", r.lag, r.coarse - r.second);
+        CHECK(name, !confident(r));
+    }
+    /* other audio over the same bass: the shared note must not carry it through */
+    memset(a, 0, sizeof a);
+    memset(b, 0, sizeof b);
+    add_sine(a, 41.0, 0.8);
+    add_sine(b, 41.0, 0.8);
+    add_hats(a, 0.11, 0.2);
+    add_hats(b, 0.17, 0.2);
+    {
+        ofs_res_t r = measure(a, b, 0);
+        snprintf(name, sizeof name, "other parts over the same bass, the second difference does not match: not confident (lag %ld, lead %.3f)",
+                 r.lag, r.coarse - r.second);
+        CHECK(name, !confident(r));
     }
 
     repeating(a, 2048);

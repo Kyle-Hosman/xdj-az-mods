@@ -56,3 +56,8 @@ int azcm_confirm(const char *t, const char *x, const char *y, void (*fn)(int, vo
     (void) u;
     return -1;
 }
+static void sdk_deck_forget(int owner) { (void) owner; }
+static int sd_threads_of(int owner) {
+    (void) owner;
+    return 0;
+}

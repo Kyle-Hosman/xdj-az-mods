@@ -192,6 +192,16 @@ AZ_FEATURE( HIDE_TRACK_TITLE,  "hide-track-title",           "Hide Track Title",
  * (extras.c, Key in Track Title) */
 AZ_FEATURE( DECK_KEY_TITLE,    "deck-key-title",             "Key in Track Title",         EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
             .d.help = "Shows each deck's key at the end of its track title. Tap it for key shift.")
+/* rekordbox's vocal detection (PVDI, in each track's .2EX) as a dashed strip above each deck's
+ * overview, where the panel has room for it (vocal_indicator.c) */
+AZ_FEATURE( VOCAL_INDICATOR,   "vocal-indicator",            "Vocal Indicator",            EXTRAS,       AZ_ROW_TOGGLE,  0,                              -1,
+            .d.help = "Shows where the vocals are, from rekordbox's vocal detection.\nNeeds "
+                      "tracks analyzed with vocal detection in rekordbox.")
+/* where it shows: above each deck's scrolling waveform, above its waveform preview */
+AZ_FEATURE( VOCAL_IND_WAVE,    "vocal-indicator-waveform",   "Above Waveform",             VOCAL_INDICATOR, AZ_ROW_TOGGLE, AZ_ROW_DEFAULT_ON,           -1,
+            .d.help = "A strip along the top of each deck's waveform.")
+AZ_FEATURE( VOCAL_IND_PREVIEW, "vocal-indicator-preview",    "Above Preview",              VOCAL_INDICATOR, AZ_ROW_TOGGLE, AZ_ROW_DEFAULT_ON,           -1,
+            .d.help = "A strip above each deck's waveform preview, in 2 DECK.")
 /* (from the CDJ-3000X) two bar rulers between the decks' waveforms in 2 DECK and 2/4 DECK, and
  * the four decks' CDJ-3000 style meters in a band above the lanes in 4 DECK, from EP147's own
  * usecase::phase_meter */

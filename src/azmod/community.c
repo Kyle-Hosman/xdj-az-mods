@@ -85,6 +85,10 @@ typedef struct {
     int  hooks_ok;              /* manifest "hooks": true and not an "any" mod */
     int  any;                   /* firmware: ["any"] */
     int  nhooks;
+    int  sticky;                /* __atomic: used a service that lasts until the next start (hooks, vtable
+                                 * slots, surfaces, X windows, audio taps, handoff): not turned off live */
+    int  inflight;              /* __atomic: calls into the mod now running on other threads (cm_enter) */
+    int  dirty;                 /* turned off live but a thread of it kept running: on again after a reload */
     void *h;
     const az_mod_v1 *m;
     const az_screen_v1 *screen;
@@ -104,13 +108,30 @@ typedef struct {
     char data[260], assets[260];  /* data_dir / assets_dir paths: never blanked once handed out */
     int  data_ok, assets_ok;      /* the current answer: path (1) or NULL (0) */
     long data_at, assets_at;      /* re-checked every CM_DIR_TTL_MS */
-    long log_bytes;
+    long log_bytes;               /* __atomic: any thread that logs adds to it */
     int log_sized;   /* log_bytes started from the file left by earlier starts */
     const char *refused_said[24]; /* services already logged as refused for a foreign caller */
     uintptr_t lo, hi;           /* the mod's mapped range, for crash blame */
 } cm_mod;
 static cm_mod g_cm[CM_MAX];
-static int    g_cm_n = 0, g_cm_live = 0;       /* records / mods with state LOADED */
+static int    g_cm_n = 0, g_cm_live = 0;       /* records / mods with state LOADED (__atomic) */
+/* A mod's state is written on the UI thread and read on others (the bus, touch and audio
+ * threads, the mods' own): every write and every read off the UI thread is atomic. */
+static inline void cm_set_state(cm_mod *c, int s) { __atomic_store_n(&c->state, s, __ATOMIC_SEQ_CST); }
+static inline int cm_running(const cm_mod *c) { return __atomic_load_n(&c->state, __ATOMIC_ACQUIRE) == AZCM_LOADED; }
+static inline int cm_nlive(void) { return __atomic_load_n(&g_cm_live, __ATOMIC_RELAXED); }
+/* A call into mod c from a thread other than the UI thread: 1 = make it, then cm_leave(c);
+ * 0 = the mod is not running. A live stop sets the state first and then waits for inflight to
+ * reach 0, so once it has, no such call is running or can start (both sides are seq_cst). */
+static inline int cm_enter(cm_mod *c) {
+    /* not running: out before counting, so a busy caller cannot keep a live stop waiting */
+    if (__atomic_load_n(&c->state, __ATOMIC_ACQUIRE) != AZCM_LOADED) return 0;
+    __atomic_add_fetch(&c->inflight, 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&c->state, __ATOMIC_SEQ_CST) == AZCM_LOADED) return 1;
+    __atomic_sub_fetch(&c->inflight, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+static inline void cm_leave(cm_mod *c) { __atomic_sub_fetch(&c->inflight, 1, __ATOMIC_RELEASE); }
 static int    g_cm_suspended = 0;              /* quarantine tripped this start */
 static int    g_cm_alloff = 0;                 /* community mods switched off (stick or menu) */
 static long   g_cm_t0 = 0;                     /* when this start loaded mods (ms) */
@@ -118,6 +139,7 @@ static int    g_cm_timing = 0;                 /* g_cm_t0 is set (0 is a valid c
 static int    g_cm_healthy = 0;                /* .starting reset after CM_HEALTHY_MS */
 static int    g_cm_loading = -1;               /* index whose init() is running */
 static int    g_sdk_in_init;                   /* 1 while g_cm_loading's init() runs (community_init) */
+static int    g_cm_live_try;                   /* cm_load_one for a mod turned on live (azcm_live_set) */
 static int g_cm_redraw = 0;   /* __atomic_* : set by any thread, consumed by the overlay loop */
 static char   g_cm_fwtag[32];
 static uintptr_t g_cm_text_lo = 0, g_cm_text_hi = 0;   /* EP147's executable range */
@@ -1098,6 +1120,10 @@ static pthread_mutex_t g_cm_mu = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
  * example id, or a careless mod, must not change another mod's settings or hooks), so each service
  * checks that it was called from inside the named mod's own code. Unknown range = refused for
  * hooks, allowed for the rest (it is set before init() runs, so that is rare). */
+/* A service called as the last statement of a function the core called is a tail call at -O2: its
+ * return address lies in the core, so it reads as outside the mod. */
+#define CM_OUTSIDE_CODE \
+    "called with this mod's id from outside its code (or as the last call of a callback: build with -fno-optimize-sibling-calls)"
 static int cm_called_by(cm_mod *c, uintptr_t ra) {
     return c && c->hi && ra >= c->lo && ra < c->hi;
 }
@@ -1118,7 +1144,7 @@ static cm_mod *cm_self(const char *id, uintptr_t ra, const char *what) {
             if (c->refused_said[k] == what || !strcmp(c->refused_said[k], what)) seen = 1;
         if (!seen) {
             if (k < (int) (sizeof c->refused_said / sizeof c->refused_said[0])) c->refused_said[k] = what;
-            cm_logf(c, 1, "%s refused: called with this mod's id from outside its code", what);
+            cm_logf(c, 1, "%s refused: " CM_OUTSIDE_CODE, what);
         }
         return NULL;
     }
@@ -1176,7 +1202,7 @@ static const char *cm_assets_dir(const char *id) {
  * (the load result, which the DJ may need to send to the mod's author). */
 static _Atomic int g_cm_logs_on = 0; /* tick writes it, any mod thread that logs reads it */
 static void cm_vlog(cm_mod *c, int force, const char *fmt, va_list ap) {
-    if (!c || (!force && !g_cm_logs_on) || c->log_bytes >= CM_LOG_CAP) return;
+    if (!c || (!force && !g_cm_logs_on) || __atomic_load_n(&c->log_bytes, __ATOMIC_RELAXED) >= CM_LOG_CAP) return;
     if (g_cm_in_frame) {   /* queue it: the bus thread runs at real-time priority and must not block */
         unsigned k = __atomic_fetch_add(&c->fq.w, 1, __ATOMIC_RELAXED) % 8;
         if (__atomic_load_n(&c->fq.ready[k], __ATOMIC_ACQUIRE)) {
@@ -1201,7 +1227,7 @@ static void cm_vlog(cm_mod *c, int force, const char *fmt, va_list ap) {
         struct stat st;
         if (azlog_rotate(p, CM_LOG_CAP / 2) || stat(p, &st) != 0) st.st_size = 0;
         __atomic_add_fetch(&c->log_bytes, (long) st.st_size, __ATOMIC_RELAXED);
-        if (c->log_bytes >= CM_LOG_CAP) return;
+        if (__atomic_load_n(&c->log_bytes, __ATOMIC_RELAXED) >= CM_LOG_CAP) return;
     }
     int fd = open(p, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);   /* logcap-ok: log_bytes caps it */
     if (fd < 0) return;
@@ -1231,7 +1257,7 @@ static int cm_claim_hook(const char *id, uintptr_t addr, void *hook, void **orig
         return -1;
     }
     if (!cm_called_by(c, CM_RA())) {
-        cm_logf(c, 1, "claim_hook 0x%lx refused: called with this mod's id from outside its code", (unsigned long) addr);
+        cm_logf(c, 1, "claim_hook 0x%lx refused: " CM_OUTSIDE_CODE, (unsigned long) addr);
         return -1;
     }
     if (!g_sdk_in_init || (c - g_cm) != g_cm_loading) { /* a hook goes in before the mod runs */
@@ -1270,6 +1296,7 @@ static int cm_claim_hook(const char *id, uintptr_t addr, void *hook, void **orig
         return -1;
     }
     c->nhooks++;
+    __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED);
     cm_logf(c, 1, "claim_hook 0x%lx ok", (unsigned long) addr);
     return 0;
 }
@@ -1346,6 +1373,7 @@ static int cm_register_screen(const char *id, const az_screen_v1 *scr) {
 static int cm_frame_filter(const char *id, unsigned bus_mask, az_frame_fn fn, void *user);
 static int cm_touch_filter(const char *id, az_touch_fn fn, void *user);
 static void sdk_timing_init(void);
+static void sdk_input_forget(const cm_mod *c);
 /* A paint context (az_draw) is live only inside the on_draw / on_paint call that received it: the
  * core marks it for the call and clears it after (cm_paint_begin / cm_paint_end). A context a mod
  * kept and used later, or used from another thread, points at memory the core has moved on from:
@@ -1394,6 +1422,10 @@ static int sd_confirm(const char *id, const char *title, const char *text, const
                       void (*fn)(int yes, void *user), void *user);
 static void sd_post_ui(const char *id, void (*fn)(void *user), void *user);
 static int sd_thread_start(const char *id, const char *name, void *(*fn)(void *), void *arg);
+static int sd_threads_of(int owner);
+static void sdk_deck_forget(int owner);
+static int sdk_proc_forget(const char *id);
+static void sdk_rows_forget(cm_mod *c);
 static void sdk_deck_tick(long now);
 static void sdk_ui_tick(void);
 /* The community host's unit test builds this file without azmod.c and names its stand-ins. */
@@ -1492,7 +1524,7 @@ static const az_core_v1 g_cm_core = {
 
 /* ---- loading ------------------------------------------------------------------------ */
 static void cm_refuse(cm_mod *c, int state, const char *fmt, ...) {
-    c->state = state;
+    cm_set_state(c, state);
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(c->reason, sizeof c->reason, fmt, ap);
@@ -1539,7 +1571,7 @@ static int cm_owner_of(uintptr_t a) {
 /* A crash nobody could be blamed for while community mods are loaded: append its time to
  * CM_CRASHES (repeated ones switch community mods off at the next start). Async-signal-safe. */
 static void cm_note_unblamed_crash(void) {
-    if (!g_cm_live) return;
+    if (!cm_nlive()) return;
     int fd = open(CM_CRASHES, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);   /* logcap-ok: pruned to the window at every start */
     if (fd < 0) return;
     char b[24];
@@ -1603,6 +1635,9 @@ static void cm_crash(int sig, siginfo_t *si, void *ucv) {
     if (sig == SIGABRT) raise(SIGABRT);           /* abort() does not re-fault: re-raise */
 }
 static void cm_install_blame(void) {
+    static int done;   /* once: a second install would save cm_crash as its own previous action */
+    if (done) return;
+    done = 1;
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = cm_crash;
@@ -1664,6 +1699,38 @@ static void cm_names(cm_mod *c) {
         }
     }
     if (!c->name[0]) snprintf(c->name, sizeof c->name, "%s", c->id);
+}
+static void cm_mark_initing(const cm_mod *c) {
+    mkdir(CM_STATE, 0755);
+    int fd = open(CM_INITING, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        if (write(fd, c->id, strlen(c->id)) < 0) { /* best effort */
+        }
+        fsync(fd);
+        close(fd);
+    }
+}
+/* init() of an opened, checked mod; CM_INITING is already written. 0 = it runs. */
+static int cm_run_init(cm_mod *c, const az_mod_v1 *m) {
+    c->m = m;
+    g_cm_loading = (int) (c - g_cm);
+    g_sdk_in_init = 1;
+    int rc = m->init(&g_cm_core);
+    g_sdk_in_init = 0;
+    g_cm_loading = -1;
+    unlink(CM_INITING);
+    if (rc) {
+        c->m = NULL;
+        c->screen = NULL;   /* stays mapped (see cm_load_one); nothing of it is called again */
+        cm_refuse(c, AZCM_FAILED, "Its init() returned %d%s", rc, c->nhooks ? " (after patching code; reload to clear)" : "");
+        return -1;
+    }
+    c->reason[0] = 0;
+    cm_set_state(c, AZCM_LOADED);
+    __atomic_add_fetch(&g_cm_live, 1, __ATOMIC_RELAXED);
+    dbg("community: %s %s LOADED (%d hook%s)\n", c->id, c->version, c->nhooks, c->nhooks == 1 ? "" : "s");
+    cm_logf(c, 1, "loaded %s on %s (%d hooks)", c->version, g_cm_fwtag, c->nhooks);
+    return 0;
 }
 static void cm_load_one(cm_mod *c) {
     char dir[160], p[200];
@@ -1773,6 +1840,7 @@ static void cm_load_one(cm_mod *c) {
         return;
     }
     c->hooks_ok = hooks && !c->any;
+    if (g_cm_live_try && hooks) return;   /* turned on live: a mod that patches code waits for a reload */
     /* ELF */
     snprintf(p, sizeof p, "%s/%s.so", dir, c->id);
     char why[112];
@@ -1792,16 +1860,7 @@ static void cm_load_one(cm_mod *c) {
     /* "this mod is starting": on p7 before any of its code runs (dlopen runs its constructors),
      * removed once init() returns. If EP147 freezes or dies in between (a freeze sends no signal)
      * the marker survives and the next start suspends exactly this mod. */
-    {
-        mkdir(CM_STATE, 0755);
-        int fd = open(CM_INITING, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-        if (fd >= 0) {
-            if (write(fd, c->id, strlen(c->id)) < 0) { /* best effort */
-            }
-            fsync(fd);
-            close(fd);
-        }
-    }
+    cm_mark_initing(c);
     /* load: RTLD_LOCAL, so nothing it exports reaches the process's symbol scope. Once opened, a
      * library is never closed: a constructor or an init() may have started a thread, or left a
      * pointer to its code with the deck, so unmapping it could crash EP147 later. */
@@ -1844,24 +1903,11 @@ static void cm_load_one(cm_mod *c) {
         cm_refuse(c, AZCM_REFUSED, "%s", bad);
         return;
     }
-    c->m = m;
-    g_cm_loading = (int) (c - g_cm);
-    g_sdk_in_init = 1;
-    int rc = m->init(&g_cm_core);
-    g_sdk_in_init = 0;
-    g_cm_loading = -1;
-    unlink(CM_INITING);
-    if (rc) {
-        c->m = NULL;
-        c->screen = NULL;   /* stays mapped (see above); nothing of it is called again */
-        cm_refuse(c, AZCM_FAILED, "Its init() returned %d%s", rc, c->nhooks ? " (after patching code; reload to clear)" : "");
+    if (g_cm_live_try && !AZ_MOD_HAS_STOP(m)) {   /* turned on live: a mod without stop() waits for a reload */
+        unlink(CM_INITING);
         return;
     }
-    c->state = AZCM_LOADED;
-    c->reason[0] = 0;
-    g_cm_live++;
-    dbg("community: %s %s LOADED (%d hook%s)\n", c->id, c->version, c->nhooks, c->nhooks == 1 ? "" : "s");
-    cm_logf(c, 1, "loaded %s on %s (%d hooks)", c->version, g_cm_fwtag, c->nhooks);
+    cm_run_init(c, m);
 }
 
 static void cm_write_status(void) {
@@ -2063,8 +2109,8 @@ static void community_init(void) {
     /* handoff asks the DJ through the core's own dialog (sdk_proc.c, sdk_ui.c) */
     __atomic_store_n(&g_sdk_confirm_core, azcm_confirm, __ATOMIC_RELEASE);
     for (int i = 0; i < nen; i++) cm_load_one(&g_cm[i]);
-    if (g_cm_live) cm_install_blame();
-    dbg("community: %d of %d enabled mod(s) loaded\n", g_cm_live, g_cm_n);
+    if (cm_nlive()) cm_install_blame();
+    dbg("community: %d of %d enabled mod(s) loaded\n", cm_nlive(), g_cm_n);
     cm_write_status();
 }
 
@@ -2102,7 +2148,7 @@ static void community_tick(void) {
         pthread_mutex_unlock(&g_cm_mu);
         cm_conf_save();
     }
-    if (!g_cm_live) return;
+    if (!cm_nlive()) return;
     if (now - last_tick < 33) return;
     last_tick = now;
     {
@@ -2135,13 +2181,18 @@ static void community_tick(void) {
 
 /* The ErP LED frame, before core's single CRC recompute. Returns 1 if a mod ate it. */
 static int community_frame(int bus, unsigned char *f, int len) {
-    if (!g_cm_live) return 0;
+    if (!cm_nlive()) return 0;
     for (int i = 0; i < g_cm_n; i++) {
-        const az_mod_v1 *m = g_cm[i].m;
-        if (g_cm[i].state != AZCM_LOADED || !m || !m->on_frame) continue;
-        g_cm_in_frame = 1;
-        int r = m->on_frame(bus, f, len);
-        g_cm_in_frame = 0;
+        cm_mod *c = &g_cm[i];
+        if (!cm_enter(c)) continue;
+        const az_mod_v1 *m = c->m;
+        int r = 0;
+        if (m && m->on_frame) {
+            g_cm_in_frame = 1;
+            r = m->on_frame(bus, f, len);
+            g_cm_in_frame = 0;
+        }
+        cm_leave(c);
         if (r == AZ_FRAME_EATEN) return 1;
     }
     return 0;
@@ -2277,4 +2328,117 @@ void azcm_set_all_off(int off) {
         int fd = open(CM_USER_OFF, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
         if (fd >= 0) close(fd);
     } else unlink(CM_USER_OFF);
+}
+
+/* ---- turning a mod on or off while the deck runs (az_mod_v1.stop) ----------------------- */
+#define CM_LIVE_DRAIN_MS 500    /* calls already inside the mod on other threads, at a live stop */
+#define CM_LIVE_THREADS_MS 1000   /* threads it started through thread_start, after its stop() */
+
+/* The stage as az-usbload writes it from azmods.cfg (cm_ctl): <id>/<id>.off for a mod turned off,
+ * the sorted `enabled` list of those turned on. Written now, so a restart without a re-mirror
+ * starts what the DJ just chose. */
+static int cm_id_cmp(const void *a, const void *b) { return strcmp((const char *) a, (const char *) b); }
+static void cm_stage_mirror(const char *id, int on) {
+    char p[200];
+    snprintf(p, sizeof p, CM_STAGE "/%s", id);
+    if (access(p, F_OK) != 0) return;
+    snprintf(p, sizeof p, CM_STAGE "/%s/%s.off", id, id);
+    if (on) unlink(p);
+    else {
+        int fd = open(p, O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+        if (fd >= 0) close(fd);
+    }
+    char ids[CM_MAX * 2][33];
+    int n = 0;
+    FILE *f = fopen(CM_STAGE "/enabled", "re");
+    if (f) {
+        char line[64];
+        while (n < CM_MAX * 2 - 1 && fgets(line, sizeof line, f)) {
+            line[strcspn(line, " \t\r\n")] = 0;
+            if (cm_id_ok(line) && strcmp(line, id)) snprintf(ids[n++], sizeof ids[0], "%s", line);
+        }
+        fclose(f);
+    }
+    if (on) snprintf(ids[n++], sizeof ids[0], "%s", id);
+    qsort(ids, (size_t) n, sizeof ids[0], cm_id_cmp);
+    FILE *w = fopen(CM_STAGE "/enabled.new", "we");
+    if (!w) return;
+    for (int i = 0; i < n; i++) fprintf(w, "%s\n", ids[i]);
+    if (fclose(w) == 0) rename(CM_STAGE "/enabled.new", CM_STAGE "/enabled");
+    else unlink(CM_STAGE "/enabled.new");
+}
+
+/* 1 = mod c, running, can be stopped now: it has stop() and used nothing that lasts until the
+ * next start */
+static int cm_live_stoppable(const cm_mod *c) {
+    return cm_running(c) && c->m && AZ_MOD_HAS_STOP(c->m) && !c->hooks_ok && !c->nhooks &&
+           !__atomic_load_n(&c->sticky, __ATOMIC_RELAXED);
+}
+static void cm_wait_ms(int ms) {
+    struct timespec ts = {0, ms * 1000000L};
+    nanosleep(&ts, NULL);
+}
+static int cm_live_off(cm_mod *c) {
+    if (!cm_live_stoppable(c)) return 0;
+    int idx = (int) (c - g_cm);
+    cm_set_state(c, AZCM_DISABLED);   /* from here on nothing calls into it (cm_enter, cm_running) */
+    __atomic_sub_fetch(&g_cm_live, 1, __ATOMIC_RELAXED);
+    snprintf(c->reason, sizeof c->reason, "Disabled");
+    int k = 0;
+    while (__atomic_load_n(&c->inflight, __ATOMIC_SEQ_CST) && k++ < CM_LIVE_DRAIN_MS) cm_wait_ms(1);
+    if (__atomic_load_n(&c->inflight, __ATOMIC_SEQ_CST)) {
+        /* a callback on another thread has not returned: stop() could free what it uses */
+        c->dirty = 1;
+        cm_logf(c, 1, "turned off; a callback did not return within %d ms, so stop() was not called (on again after a reload)", CM_LIVE_DRAIN_MS);
+    } else {
+        cm_mark_initing(c);   /* a stop() that freezes or crashes EP147 suspends this mod, as init() would */
+        g_cm_loading = idx;   /* its own settings and log stay usable inside stop() */
+        c->m->stop();
+        g_cm_loading = -1;
+        unlink(CM_INITING);
+    }
+    c->screen = NULL;
+    sdk_rows_forget(c);
+    sdk_input_forget(c);
+    sdk_deck_forget(idx);
+    int np = sdk_proc_forget(c->id);
+    if (np) cm_logf(c, 1, "stopped %d program%s it launched", np, np == 1 ? "" : "s");
+    for (k = 0; sd_threads_of(idx) && k < CM_LIVE_THREADS_MS / 10; k++) cm_wait_ms(10);
+    if (sd_threads_of(idx)) {
+        c->dirty = 1;
+        cm_logf(c, 1, "turned off, but %d of its threads still run (stop() must end them): on again after a reload", sd_threads_of(idx));
+    }
+    azcm_flush_settings();
+    cm_logf(c, 1, "turned off without a reload");
+    cm_write_status();
+    return 1;
+}
+static int cm_live_on(cm_mod *c) {
+    if (__atomic_load_n(&c->state, __ATOMIC_ACQUIRE) != AZCM_DISABLED || g_cm_suspended || g_cm_alloff || c->dirty)
+        return 0;
+    if (c->m) {   /* stopped live earlier this start: init() again, if the code is still the one checked */
+        char p[200], why[112], sha[65] = {0};
+        snprintf(p, sizeof p, CM_STAGE "/%s/%s.so", c->id, c->id);
+        if (cm_elf_check(p, why, sizeof why, sha) || strcmp(sha, c->sha) || !cm_is_approved(c->id, c->sha)) return 0;
+        cm_mark_initing(c);
+        cm_run_init(c, c->m);
+    } else {
+        if (c->h) return 0;   /* opened before without stop(): a reload starts it */
+        g_cm_live_try = 1;
+        cm_load_one(c);
+        g_cm_live_try = 0;
+        if (__atomic_load_n(&c->state, __ATOMIC_ACQUIRE) == AZCM_DISABLED) return 0;   /* waits for a reload */
+    }
+    if (cm_nlive()) cm_install_blame();
+    cm_write_status();
+    return 1;
+}
+/* The DJ turned mod `id` on or off (the stick's azmods.cfg already says so). UI thread. 1 = done
+ * now (the Mod Menu shows the result: running, disabled, or why it did not load); 0 = it takes
+ * effect after a reload. */
+int azcm_live_set(const char *id, int on) {
+    cm_mod *c = id ? cm_find(id) : NULL;
+    if (!c) return 0;
+    cm_stage_mirror(c->id, on);
+    return on ? cm_live_on(c) : cm_live_off(c);
 }

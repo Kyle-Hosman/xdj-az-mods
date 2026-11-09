@@ -680,6 +680,7 @@ struct overlay_ctx {
     int pending_reload; /* RELOAD was tapped: fire once its press flash is over */
     long left_src_ms;   /* when a screen button last closed the docked menu */
     int reloading_was;  /* /run/az-reloading was seen last tick (edge detect) */
+    int reloading_flag; /* the last look at it found it */
 };
 
 static void ov_window_init(struct ov_window *w) {
@@ -925,7 +926,9 @@ static int ov_reload_banner(struct overlay_ctx *c) {
     /* The USB loader is about to restart EP147: it creates /run/az-reloading (tmpfs) and
      * waits ~1.5 s. Keep the RELOADING banner painted (each repaint re-raises it) until we
      * die with the restart. The loader owns both the flag and the restart. */
-    if (access("/run/az-reloading", F_OK) == 0) {
+    static unsigned look; /* checked about 10 times a second: the loader waits ~1.5 s after the flag */
+    if ((c->reloading_flag || (look++ % 10u) == 0) &&
+        (c->reloading_flag = access("/run/az-reloading", F_OK) == 0)) {
         ov_shm_wait(c); /* the banner draws into the buffer */
         show_reloading(c->dpy, c->menu.id, c->gc, c->img, c->buf, c->scr_w, c->scr_h);
         c->reloading_was = 1;
@@ -1934,7 +1937,14 @@ static void ov_track_stems(struct overlay_ctx *c) {
      * below (that guard is for detect_source()'s readback). Under it, with the menu open, an
      * eject left the deck's mask stale and a reload of the same track kept the previous
      * track's stem mutes. Own counter, because det_tick only advances while closed. */
-    if ((++c->stem_tick % 10) == 0) { /* 8 small file reads per 10 ticks (every 100-300 ms) */
+    if ((++c->stem_tick % 10) == 0) { /* every 100-300 ms; atomics unless something changed */
+        if (!g_stem_ctl_fn) { /* azstem appeared: it takes the toggles from here on */
+            stem_ctl_resolve();
+            if (g_stem_ctl_fn) {
+                write_enable(&g_state);
+                write_stems(&g_state);
+            }
+        }
         if (read_avail(&g_state)) {
             write_stems(&g_state);
             c->dirty = 1;
@@ -3041,19 +3051,17 @@ static useconds_t ov_tick_us(void) {
  * of the tick. A tick is never shorter than OV_MIN_TICK_US, however busy the connection. */
 #define OV_MIN_TICK_US 4000
 static void ov_wait(struct overlay_ctx *c, useconds_t us, long start_ms) {
-    if (us > OV_MIN_TICK_US)
+    long left = (long) (us / 1000) - (now_ms() - start_ms);
+    if (left * 1000 <= OV_MIN_TICK_US || XEventsQueued(c->dpy, QueuedAlready) > 0) {
         usleep(OV_MIN_TICK_US);
-    else {
-        usleep(us);
         return;
     }
-    if (XEventsQueued(c->dpy, QueuedAlready) > 0)
-        return;
-    long left = (long) (us / 1000) - (now_ms() - start_ms);
-    if (left <= 0)
-        return;
+    long wait_start = now_ms();
     struct pollfd p = {.fd = ConnectionNumber(c->dpy), .events = POLLIN};
     poll(&p, 1, (int) left);
+    long waited_us = (now_ms() - wait_start) * 1000;
+    if (waited_us < OV_MIN_TICK_US) /* an event right away: the tick still lasts the minimum */
+        usleep((useconds_t) (OV_MIN_TICK_US - waited_us));
 }
 
 /* The Mod Menu's thread: owns g_state and every overlay window. */

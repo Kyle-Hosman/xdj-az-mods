@@ -329,6 +329,16 @@ static int lti_read(int deck, unsigned char id16[16], char *title, size_t tn, ch
     return 0; /* never settled: unknown */
 }
 
+static int lti_id_zero(const unsigned char id16[16]);
+/* The deck's content id (trackid::TrackID + 0x08), 0 = unknown. */
+static unsigned lti_content_id(int deck) {
+    unsigned char id[16];
+    char ti[LTI_STR], ar[LTI_STR];
+    unsigned cid = 0;
+    if (g_lti_on && lti_read(deck, id, ti, sizeof ti, ar, sizeof ar) && !lti_id_zero(id))
+        memcpy(&cid, id + 8, 4);
+    return cid;
+}
 static int lti_id_zero(const unsigned char id16[16]) {
     for (int i = 0; i < 16; i++)
         if (id16[i])

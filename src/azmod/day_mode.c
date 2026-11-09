@@ -2058,12 +2058,18 @@ static int dm_ink_classify(void *ipd, uint32_t *ink_argb) {
 }
 
 static void dm_drawimg_t_body(void *g, void **img, const void *xf, int fill);
+static _Atomic int g_dm_ever_on; /* set before g_dm_on first goes to 1, never cleared */
 /* An image paints over whatever fill was under it (the deck strips draw a colored
  * fill, then opaque art on top), so it counts as a later "fill" for
  * dm_satfill_is_last, after it is drawn, since its own ink decision looks under it. */
 static __thread int
     t_dm_keep_gen; /* this draw restored stock white on its tile: not a new ground */
 static void dm_drawimg_t_hook(void *g, void **img, const void *xf, int fill) {
+    /* No theme was on since EP147 started: no art is themed, so nothing to restore or look up. */
+    if (!__atomic_load_n(&g_dm_ever_on, __ATOMIC_RELAXED)) {
+        g_dm_orig_drawimg_t(g, img, xf, fill);
+        return;
+    }
     t_dm_keep_gen = 0;
     dm_drawimg_t_body(g, img, xf, fill);
     if (!t_dm_keep_gen)
@@ -2514,6 +2520,8 @@ static void *dm_watch(void *arg) {
             }
         }
         if (want != __atomic_load_n(&g_dm_on, __ATOMIC_RELAXED)) {
+            if (want)
+                __atomic_store_n(&g_dm_ever_on, 1, __ATOMIC_RELAXED);
             __atomic_store_n(&g_dm_flip, want && dm_flip_on(), __ATOMIC_RELAXED);
             __atomic_store_n(&g_dm_on, want, __ATOMIC_RELAXED);
             __atomic_add_fetch(&g_dm_gen, 1,
@@ -2544,8 +2552,7 @@ static void *dm_watch(void *arg) {
                 fclose(f);
             }
         }
-        if (access("/tmp/azmod-dm-repaint", F_OK) ==
-            0) { /* DEV control: the switch's repaint, no switch */
+        if (AZ_PROBE_ON("/tmp/azmod-dm-repaint")) { /* DEV control: the switch's repaint, no switch */
             unlink("/tmp/azmod-dm-repaint");
             if (!d)
                 d = XOpenDisplay(NULL);
@@ -2556,22 +2563,22 @@ static void *dm_watch(void *arg) {
                 XFlush(d);
             }
         }
-        if (access("/tmp/azmod-dm-stat", F_OK) == 0) {
+        if (AZ_PROBE_ON("/tmp/azmod-dm-stat")) {
             unlink("/tmp/azmod-dm-stat");
             __atomic_store_n(&g_dm_stat, 120, __ATOMIC_RELAXED);
         }
         __atomic_store_n(&g_dm_strip_off,
                          access("/home/root/settings/azmod-ovstrip.off", F_OK) == 0,
                          __ATOMIC_RELAXED);
-        if (access("/tmp/azmod-dm-stripcensus", F_OK) == 0) {
+        if (AZ_PROBE_ON("/tmp/azmod-dm-stripcensus")) {
             unlink("/tmp/azmod-dm-stripcensus");
             __atomic_store_n(&g_dm_stripcensus, 400, __ATOMIC_RELAXED);
         }
-        if (access("/tmp/azmod-dm-gcensus", F_OK) == 0) {
+        if (AZ_PROBE_ON("/tmp/azmod-dm-gcensus")) {
             unlink("/tmp/azmod-dm-gcensus");
             __atomic_store_n(&g_dm_gcensus, 3000, __ATOMIC_RELAXED);
         }
-        if (access("/tmp/azmod-dm-fakeretain", F_OK) == 0) {
+        if (AZ_PROBE_ON("/tmp/azmod-dm-fakeretain")) {
             unlink("/tmp/azmod-dm-fakeretain");
             __atomic_store_n(&g_dm_add_fake, 1, __ATOMIC_RELAXED);
         }

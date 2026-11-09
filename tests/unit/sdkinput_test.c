@@ -45,7 +45,19 @@ typedef struct {
     int state;
     int logs;
     char last[200];
+    int inflight;
 } cm_mod;
+/* as community.c: a call into the mod from another thread only while it runs */
+static int cm_enter(cm_mod *c) {
+    if (__atomic_load_n(&c->state, __ATOMIC_ACQUIRE) != AZCM_LOADED)
+        return 0;
+    __atomic_add_fetch(&c->inflight, 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&c->state, __ATOMIC_SEQ_CST) == AZCM_LOADED)
+        return 1;
+    __atomic_sub_fetch(&c->inflight, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+static void cm_leave(cm_mod *c) { __atomic_sub_fetch(&c->inflight, 1, __ATOMIC_RELEASE); }
 static cm_mod g_mods[2] = {{"mod-a", AZCM_LOADED}, {"mod-b", AZCM_LOADED}};
 static __thread int g_cm_in_frame;
 static int g_sdk_in_init;

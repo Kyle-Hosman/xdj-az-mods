@@ -27,6 +27,7 @@ typedef struct {
 } deck_stems;
 static deck_stems g_dk[NDECK];
 static _Atomic(void *) g_deck_self[MAX_DECKS];
+static _Atomic unsigned g_env_cid[NDECK];
 static const int STEM_SLOT[NDECK] = {0, 1, 2, 3};
 static _Atomic unsigned g_deck_trackgen[NDECK];
 static _Atomic int g_stem_pending[NDECK], g_stem_loading[NDECK], g_load_again[NDECK];

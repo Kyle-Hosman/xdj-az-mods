@@ -405,12 +405,12 @@ def colfields():
 
 @seed("ofscache")
 def ofscache():
-    yield "taken", b"AZOFS1 1000 2000 3000 1042\n"
-    yield "negative", b"AZOFS1 1000 2000 3000 -8192\n"
-    yield "other-size", b"AZOFS1 1001 2000 3000 1042\n"
-    yield "past-window", b"AZOFS1 1000 2000 3000 8193\n"
-    yield "no-newline", b"AZOFS1 1000 2000 3000 1042"
-    yield "huge", b"AZOFS1 99999999999999999999 2000 3000 1042\n"
+    yield "taken", b"AZOFS2 1000 2000 3000 1042\n"
+    yield "negative", b"AZOFS2 1000 2000 3000 -8192\n"
+    yield "other-size", b"AZOFS2 1001 2000 3000 1042\n"
+    yield "past-window", b"AZOFS2 1000 2000 3000 8193\n"
+    yield "no-newline", b"AZOFS2 1000 2000 3000 1042"
+    yield "huge", b"AZOFS2 99999999999999999999 2000 3000 1042\n"
 
 @seed("inputmem")
 def inputmem():
@@ -525,6 +525,18 @@ def hcanlz():
                                     pcp2(2, 29343, 0x00c4ff, b"\0d\0r\0o\0p"), pcp2(8, 999999, 0xffe800)])])
     yield "no-cues", anlz_file([(b"PPTH", b"\0" * 4, b"\0" * 8)])
     yield "short", b"PMAI\0\0\0\x1c"
+
+
+@seed("vdanlz")
+def vdanlz():
+    key = bytes.fromhex("1edd1e1902191b11192318192411fb111e2a15")
+    plain = bytes([0] * 15 + [1, 1, 1, 2, 2, 3, 3, 4, 4, 4])
+    masked = bytes(x ^ key[i % 19] for i, x in enumerate(plain))
+    pvdi = lambda hop, v: (b"PVDI", struct.pack(">IHHI", hop, 22050, 1, len(v)), v)
+    yield "plain", anlz_file([(b"PPTH", b"\0" * 4, b"\0" * 8), pvdi(1024, plain)])
+    yield "masked", anlz_file([pvdi(0x80000400, masked)])
+    yield "no-pvdi", anlz_file([(b"PPTH", b"\0" * 4, b"\0" * 8)])
+    yield "empty", anlz_file([pvdi(1024, b"")])
 
 
 @seed("cmbrowse")

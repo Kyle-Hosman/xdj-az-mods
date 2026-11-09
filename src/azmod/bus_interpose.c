@@ -330,6 +330,14 @@ static void drum_hold_led(unsigned char *pb, int hold_state, int blink_on) {
  * mod edits) and re-stamps its CRC over [0:0x78]. The 16-byte arg is a descriptor
  * {u32 magic, u32 size, u64 data_ptr}; the frame lives at data_ptr, in-process. */
 static int (*next_ioctl)(int, unsigned long, ...);
+
+/* A SUBUCOM message request: type byte 0x70 and a 16-byte argument, the descriptor above. The
+ * driver's other type-0x70 requests (timer status, bits per word, rx bytes) carry a 1-, 2- or
+ * 4-byte argument, so the descriptor fields must never be read from them. */
+static int subucom_msg_req(unsigned long req) {
+    return ((req >> 8) & 0xffu) == 0x70u && ((req >> 16) & 0x3fffu) == 0x10u;
+}
+
 int ioctl(int fd, unsigned long req, ...) {
     va_list ap;
     va_start(ap, req);
@@ -340,7 +348,7 @@ int ioctl(int fd, unsigned long req, ...) {
         return next_ioctl(fd, req, arg);
     /* Deck frames on their way to the jog displays: timed in the picture style only
      * (jog_display.c); observe-only, before the frame goes out. */
-    if (arg && ((req >> 8) & 0xffu) == 0x70u) {
+    if (arg && subucom_msg_req(req)) {
         if (fd == __atomic_load_n(&g_deckbus_fd[0], __ATOMIC_RELAXED))
             jog_tx_note(0, arg);
         else if (fd == __atomic_load_n(&g_deckbus_fd[1], __ATOMIC_RELAXED))
@@ -351,7 +359,7 @@ int ioctl(int fd, unsigned long req, ...) {
      * logs the mixer ioctl's buffer so that stays checkable. next_ioctl runs
      * first so any RX is filled. Type byte 0x70 = SUBUCOM message; descriptor
      * {?, u32 size @+4, u64 frame-ptr @+8}, as on the LED path. */
-    if (fd == g_mixer_fd && arg && ((req >> 8) & 0xffu) == 0x70u) {
+    if (fd == g_mixer_fd && arg && subucom_msg_req(req)) {
         { /* the mixer's LED frame as EP147 sends it: community mods may observe it */
             uint32_t tsize = 0;
             uint64_t tptr = 0;
@@ -396,8 +404,7 @@ int ioctl(int fd, unsigned long req, ...) {
      * Layout: pad RGB at ERP_LED_PAD_OFF (0x1e) + 4k, mode buttons at
      * ERP_LED_MODE_OFF (0x0e) + 4j; CRC-16/X25 over [0:0x78] at 0x78/0x79 covers
      * both, so any edit needs a re-stamp. */
-    if (fd == g_erp_fd && arg && ((req >> 8) & 0xffu) == 0x70u &&
-        ((req >> 16) & 0x3fffu) == 0x10u) {
+    if (fd == g_erp_fd && arg && subucom_msg_req(req)) {
         uint32_t size;
         uint64_t dptr;
         memcpy(&size, (unsigned char *) arg + 4, 4);

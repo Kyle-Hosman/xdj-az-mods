@@ -16,6 +16,7 @@
  * thread (a mod thread), never on EP147's or the UI thread. Refusals go to the mod's log.
  * Included by community.c ahead of the services table.
  */
+#include "pioneer_dir.h" /* PIONEER/ or .PIONEER/: where a stick's rekordbox export is */
 #ifndef ONELIBRARY_KEY_SM
 #include "onelibkey_sm.h"
 #endif
@@ -123,7 +124,7 @@ static int sdk_stick_mount(int stick, char *mount, size_t cap) {
         snprintf(sys, sizeof sys, "%s/%s", SDK_LIB_SYSBLOCK, dev + 5);
         if (!realpath(sys, real) || sdk_port_of_sysfs(real) != stick + 1)
             continue;
-        snprintf(db, sizeof db, "%s/PIONEER/rekordbox/exportLibrary.db", mp);
+        snprintf(db, sizeof db, "%s/%s/rekordbox/exportLibrary.db", mp, pd_dir(mp));
         if (access(db, R_OK) != 0)
             continue;
         if (!hits || strcmp(found, mp) != 0) /* a volume mounted twice is still one */
@@ -252,7 +253,7 @@ static int sdk_lib_playlists(const char *id, int stick,
     char mount[PATH_MAX], db[PATH_MAX + 40];
     if (!sdk_lib_begin(id, CM_RA(), "lib_playlists", (uintptr_t) fn, stick, mount, sizeof mount))
         return -1;
-    snprintf(db, sizeof db, "%s/PIONEER/rekordbox/exportLibrary.db", mount);
+    snprintf(db, sizeof db, "%s/%s/rekordbox/exportLibrary.db", mount, pd_dir(mount));
     struct sdk_pl *v = NULL;
     int n = 0, rr = 0;
     for (int attempt = 0; attempt < 2; attempt++) {
@@ -357,7 +358,7 @@ static int sdk_lib_tracks(const char *id, int stick, int playlist_id,
     }
     if (!sdk_lib_begin(id, CM_RA(), "lib_tracks", (uintptr_t) fn, stick, mount, sizeof mount))
         return -1;
-    snprintf(db, sizeof db, "%s/PIONEER/rekordbox/exportLibrary.db", mount);
+    snprintf(db, sizeof db, "%s/%s/rekordbox/exportLibrary.db", mount, pd_dir(mount));
     struct sdk_tr *v = NULL;
     int n = 0, rr = 0;
     for (int attempt = 0; attempt < 2; attempt++) {

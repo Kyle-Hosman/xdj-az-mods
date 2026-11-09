@@ -15,7 +15,7 @@ PASS=0; FAIL=0
 cv(){ rm -rf $W/cv; mkdir -p $W/cv; [ -f $W/root/azmod.conf ] || return 0
     CVD=$W/cv perl -ne 'next unless /^([a-z0-9-]+):(cfg|str)\.(\S+) = (.*)$/; my ($i,$n,$k,$v)=($1,$2,$3,$4); $k=~s/:([0-9a-f]{2})/chr hex $1/ge; if ($n eq "str") { $v=~s/^"(.*)"$/$1/; $k.="\$" } open my $f, ">>", "$ENV{CVD}/$i.cfg" or die; print $f "$k=$v\n"' $W/root/azmod.conf; }
 ok(){ cv; if eval "$2"; then PASS=$((PASS+1)); echo "PASS $1"; else FAIL=$((FAIL+1)); echo "FAIL $1"; echo "---- output:"; cat $W/out; fi; }
-$HCC -O1 -g -Wall -I$A -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness $T/harness.c -ldl -rdynamic 2>$W/cc.log || { cat $W/cc.log; exit 1; }
+$HCC -O1 -g -Wall -I$A -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness $T/harness.c -ldl -lpthread -rdynamic 2>$W/cc.log || { cat $W/cc.log; exit 1; }
 TAG=$($W/harness tag); read A0 A1 < <($W/harness addrs)
 echo "tag $TAG"
 $W/harness tagmp > $W/out
@@ -591,7 +591,7 @@ ok "a kept paint context draws nothing after on_draw returns" 'grep -q "PAINT pa
 rm -rf $W/ctlsrc; mkdir -p $W/ctlsrc; cp -r $A $W/ctlsrc/azmod; cp -r $A/../common $W/ctlsrc/common 2>/dev/null
 perl -0pi -e 's/    if \(d && d == g_cm_paint\)\n        return 1;/    if (d)\n        return 1;/' $W/ctlsrc/azmod/community.c
 if cmp -s $A/community.c $W/ctlsrc/azmod/community.c; then echo "MUTATION DID NOT APPLY (paint control)"; FAIL=$((FAIL+1)); fi
-$HCC -O1 -g -w -I$W/ctlsrc/azmod -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness-ctl $W/ctlsrc/azmod/test/community/harness.c -ldl -rdynamic 2>>$W/cc.log
+$HCC -O1 -g -w -I$W/ctlsrc/azmod -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness-ctl $W/ctlsrc/azmod/test/community/harness.c -ldl -lpthread -rdynamic 2>>$W/cc.log
 rm -f $W/root/azmod-community/.starting; $W/harness-ctl init paint > $W/out
 ok "CONTROL: without the check, the kept context draws from tick" 'grep -q "PAINT painted=2 in_paint=2 after_ticks=[1-9]" $W/out'
 # 10. Controls for the eject, refusal-log and deck-state cases: the same cases on cores with
@@ -600,7 +600,7 @@ ctl_core() {   # ctl_core <name> <perl substitution>: $W/harness-<name> built fr
     rm -rf $W/ctlsrc; mkdir -p $W/ctlsrc; cp -r $A $W/ctlsrc/azmod; cp -r $A/../common $W/ctlsrc/common 2>/dev/null
     perl -0pi -e "$2" $W/ctlsrc/azmod/community.c
     if cmp -s $A/community.c $W/ctlsrc/azmod/community.c; then echo "MUTATION DID NOT APPLY ($1 control)"; FAIL=$((FAIL+1)); fi
-    $HCC -O1 -g -w -I$W/ctlsrc/azmod -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness-$1 $W/ctlsrc/azmod/test/community/harness.c -ldl -rdynamic 2>>$W/cc.log
+    $HCC -O1 -g -w -I$W/ctlsrc/azmod -DCM_ROOT="\"$W/root\"" -DCM_LOGDIR="\"$W/log\"" -DCM_USB_ROOT="\"$W/usb\"" -no-pie -o $W/harness-$1 $W/ctlsrc/azmod/test/community/harness.c -ldl -lpthread -rdynamic 2>>$W/cc.log
 }
 ctl_core stale 's/ && \(!c->data_ok \|\| access\(c->data, F_OK\) == 0\)\)\n        return/)\n        return/'
 reset; rm -rf $W/usb $W/usb.away; mod files-mod -DMOD_FILES; manifest files-mod '["any"]' false; enable files-mod
@@ -617,5 +617,43 @@ ctl_core stems 's/    struct azstem_deck_snap s;\n    return cm_snap\(d, &s\) ==
 reset; mod decks-mod -DMOD_DECKS; manifest decks-mod '["any"]' false; enable decks-mod
 CM_TEST_DECKS=LE $W/harness-stems init run > $W/out
 ok "CONTROL: following the stems' track, a loaded deck without a STEMS tree reads 0" 'grep -qx "loaded0=0" $W/cv/decks-mod.cfg'
+# 11. Turning a mod off and on while the deck runs (az_mod_v1.stop): only a mod with stop() and
+#     nothing that lasts until the next start; nothing is called into it between stop() and init();
+#     the stage says what was chosen, so a restart without a re-mirror agrees
+lv(){ grep "^LIVESET" $W/out | sed -n "${1}p"; }
+reset; mod live-mod -DMOD_LIVE; manifest live-mod '["any"]' false; enable live-mod
+$W/harness init live live-mod off,on,off,on > $W/out
+ok "live off: done now, stop() called, nothing runs, the stage says off" 'lv 1 | grep -q "^LIVESET off rc=1 state=2 byte0=0 ran=0 inits=1 stops=1 filtered=0 filters=1 off=1 enabled=\[\] dirty=0"'
+ok "live on again: init() again, on_frame and the filter run, the filter slot reused" 'lv 2 | grep -q "^LIVESET on rc=1 state=1 byte0=42 ran=0 inits=2 stops=1 filtered=1 filters=1 off=0 enabled=\[live-mod \] dirty=0"'
+ok "off and on twice: still one filter slot" 'lv 4 | grep -q "^LIVESET on rc=1 state=1 byte0=42 ran=0 inits=3 stops=2 filtered=2 filters=1 off=0"'
+reset; mod plain-mod; manifest plain-mod '["any"]' false; enable plain-mod
+$W/harness init live plain-mod off > $W/out
+ok "no stop(): keeps running until a reload, the stage already says off" 'lv 1 | grep -q "^LIVESET off rc=0 state=1 byte0=42 .* off=1 enabled=\[\]"'
+reset; mod live-hooks -DMOD_LIVE -DFWTAG="\"$TAG\""; manifest live-hooks "[\"$TAG\"]" true; enable live-hooks
+$W/harness init live live-hooks off > $W/out
+ok "stop() but \"hooks\": true: not stopped live" 'lv 1 | grep -q "^LIVESET off rc=0 state=1 byte0=42 .* stops=0"'
+reset; mod live-late -DMOD_LIVE; manifest live-late '["any"]' false; enable live-late; enable_only; touch $W/root/az-usbload/community/live-late/live-late.off
+$W/harness init live live-late on,off > $W/out
+ok "turned on live, never loaded this start: loads now" 'grep -q "^MOD live-late state=2" $W/out && lv 1 | grep -q "^LIVESET on rc=1 state=1 byte0=42 .* inits=1 .* off=0 enabled=\[live-late \]"'
+ok "and off again live" 'lv 2 | grep -q "^LIVESET off rc=1 state=2 byte0=0 .* stops=1 .* off=1 enabled=\[\]"'
+reset; mod late-plain; manifest late-plain '["any"]' false; enable late-plain; enable_only; touch $W/root/az-usbload/community/late-plain/late-plain.off
+$W/harness init live late-plain on,on > $W/out
+ok "turned on live without stop(): waits for a reload (twice), the stage says on" 'lv 1 | grep -q "^LIVESET on rc=0 state=2 .* off=0 enabled=\[late-plain \]" && lv 2 | grep -q "^LIVESET on rc=0 state=2"'
+reset; mod live-mod -DMOD_LIVE; manifest live-mod '["any"]' false; enable live-mod
+$W/harness init livestress live-mod 40 > $W/out
+ok "40 live offs and ons while the bus thread runs frames: no call outside init()..stop()" 'grep -q "^STRESS bad=0 overlap=0 filtered=[1-9][0-9]* frames=[1-9][0-9]* filters=1 state=1" $W/out'
+ctl_core nodrain 's/    while \(__atomic_load_n\(&c->inflight, __ATOMIC_SEQ_CST\) && k\+\+ < CM_LIVE_DRAIN_MS\) cm_wait_ms\(1\);\n    if \(__atomic_load_n\(&c->inflight, __ATOMIC_SEQ_CST\)\) \{/    if (0) {/'
+reset; mod live-mod -DMOD_LIVE; manifest live-mod '["any"]' false; enable live-mod
+# the race is this control's point: its sanitizer report is not one of the suite's
+TSAN_OPTIONS="${TSAN_OPTIONS:-}:report_bugs=0" $W/harness-nodrain init livestress live-mod 40 > $W/out
+ok "CONTROL: without waiting for calls in flight, stop() runs during one" 'grep -q "^STRESS bad=0 overlap=[1-9]" $W/out'
+# 12. A service as the last statement of a callback: a tail call at -O2, unless the mod is built
+#     with the SDK template's -fno-optimize-sibling-calls; the refusal names that flag
+reset; mod tail-flag -DMOD_LIVE -DMOD_TAILSTOP -O2 -fno-optimize-sibling-calls; manifest tail-flag '["any"]' false; enable tail-flag
+$W/harness init live tail-flag off > $W/out
+ok "last call in stop(), built with the flag: the service runs" 'grep -qx "stopped=1" $W/cv/tail-flag.cfg && ! grep -q "refused" $W/log/tail-flag.log'
+reset; mod tail-noflag -DMOD_LIVE -DMOD_TAILSTOP -O2; manifest tail-noflag '["any"]' false; enable tail-noflag
+$W/harness init live tail-noflag off > $W/out
+ok "CONTROL: last call in stop(), built without the flag: refused, the log names the flag" '! grep -q "^stopped=" $W/cv/tail-noflag.cfg && grep -q "cfg_set refused.*-fno-optimize-sibling-calls" $W/log/tail-noflag.log'
 echo "passed $PASS failed $FAIL"
 [ $FAIL = 0 ]

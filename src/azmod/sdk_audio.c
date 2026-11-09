@@ -145,7 +145,7 @@ static void *sdk_tap_run(void *arg) {
             pthread_mutex_unlock(&g_sdk_tap_mu);
             for (int i = 0; i < subs; i++) {
                 struct sdk_tap *t = &g_sdk_tap[i];
-                if (t->src != s || t->c->state != AZCM_LOADED)
+                if (t->src != s || !cm_running(t->c))
                     continue; /* a mod refused after it subscribed gets nothing */
                 if (lost != lost_seen[s]) {
                     t->have = 0; /* a gap: start a fresh block */
@@ -196,6 +196,7 @@ static int sdk_audio_tap(const char *id, int source, int frames,
         if (!aztap_wanted(&g_sdk_tap_ring[s])) /* the deck's first listener: start it empty */
             aztap_set_wanted(&g_sdk_tap_ring[s], 1);
         rc = 0;
+        __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED); /* the tap thread holds its entry: no live stop */
     }
     pthread_mutex_unlock(&g_sdk_tap_mu);
     if (rc) {

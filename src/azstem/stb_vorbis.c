@@ -1343,7 +1343,8 @@ static uint8 get8(vorb *z)
 
    #ifndef STB_VORBIS_NO_STDIO
    {
-   int c = fgetc(z->f);
+   /* A stream's FILE is used by one thread at a time; this is one call per byte of input. */
+   int c = getc_unlocked(z->f);
    if (c == EOF) { z->eof = TRUE; return 0; }
    return c;
    }
@@ -5434,6 +5435,15 @@ int stb_vorbis_get_samples_float_interleaved(stb_vorbis *f, int channels, float 
       int i,j;
       int k = f->channel_buffer_end - f->channel_buffer_start;
       if (n+k >= len) k = len - n;
+      if (z == 2 && channels == 2) {
+         const float *l = f->channel_buffers[0] + f->channel_buffer_start;
+         const float *r = f->channel_buffers[1] + f->channel_buffer_start;
+         for (j=0; j < k; ++j) {
+            buffer[j*2] = l[j];
+            buffer[j*2+1] = r[j];
+         }
+         buffer += k*2;
+      } else
       for (j=0; j < k; ++j) {
          for (i=0; i < z; ++i)
             *buffer++ = f->channel_buffers[i][f->channel_buffer_start+j];

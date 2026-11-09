@@ -927,6 +927,7 @@ static void wvupd_hook(long self) {
     g_in_root = 0;
 }
 static void gridaa_enter(long wwb, long pos_p, float zoom);
+static void vx_upd(int d, long wwb, long pos_p, float zoom); /* vocal_indicator.c */
 /* Update profile: per deck, FUN_01b93a28's duration, the gap since the previous
  * build ended, and one backtrace. Message thread only; published to
  * /tmp/azmod-updprof by the 1 Hz rates block. */
@@ -957,6 +958,8 @@ int azm_upd_enter(long a0, long a1, float zoom) {
         __atomic_store_n(&g_upd_deck, d, __ATOMIC_RELAXED);
         __atomic_fetch_add(&g_upd_bound, 1, __ATOMIC_RELAXED);
     }
+    if (d >= 0 && d < AZMOD_STEM_DECKS)
+        vx_upd(d, a0, a1, zoom); /* Vocal Indicator: this deck's scroll and zoom */
     if (d >= 0 && d < AZMOD_STEM_DECKS && g_in_root && g_orig_wvupd) {
         if (g_built_pass[d] == g_root_pass) {
             g_upd_skip = 1;

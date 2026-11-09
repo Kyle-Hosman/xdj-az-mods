@@ -56,11 +56,11 @@ static int sdk_claim_vslot(const char *id, uintptr_t slot, void *fn, void **orig
     if (!c)
         return -1;
     if (!cm_called_by(c, CM_RA())) {
-        cm_logf(c, 1, "claim_vslot 0x%lx refused: called with this mod's id from outside its code",
+        cm_logf(c, 1, "claim_vslot 0x%lx refused: " CM_OUTSIDE_CODE,
                 (unsigned long) slot);
         return -1;
     }
-    if (c->state != AZCM_LOADED && (c - g_cm) != g_cm_loading) {
+    if (!cm_running(c) && (c - g_cm) != g_cm_loading) {
         cm_logf(c, 1, "claim_vslot 0x%lx refused: the mod is not loaded", (unsigned long) slot);
         return -1;
     }
@@ -108,6 +108,7 @@ static int sdk_claim_vslot(const char *id, uintptr_t slot, void *fn, void **orig
         return -1;
     }
     c->nhooks++;
+    __atomic_store_n(&c->sticky, 1, __ATOMIC_RELAXED); /* lasts until the next start: no live stop */
     cm_logf(c, 1, "claim_vslot 0x%lx ok", (unsigned long) slot);
     return 0;
 }
